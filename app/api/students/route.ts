@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import db from '@/lib/db';
+import sql from '@/lib/db';
 
 export async function POST(request: NextRequest) {
     try {
@@ -23,45 +23,24 @@ export async function POST(request: NextRequest) {
         }
 
         // class가 존재하는지 확인
-        const classCheck = db.prepare('SELECT id FROM classes WHERE id = ?').get(classIdInt);
-        if (!classCheck) {
+        const classCheck = await sql`SELECT id FROM classes WHERE id = ${classIdInt}`;
+        if (classCheck.length === 0) {
             return NextResponse.json({
                 error: `Class with id ${classIdInt} does not exist.`
             }, { status: 404 });
         }
 
-        const deleteStmt = db.prepare(
-            'DELETE FROM students WHERE class_id = ? AND section_number = ?'
-        );
-
-        const insertStmt = db.prepare(
-            'INSERT INTO students (class_id, section_number, name, gender, is_problem_student, is_special_class, group_name, rank, birth_date, contact, notes, is_underachiever) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        );
-
-        const saveStudents = db.transaction((studentList: any[]) => {
+        // PostgreSQL transaction을 사용하여 데이터 저장
+        await sql.begin(async (sql) => {
             // 기존 학생 데이터 삭제
-            deleteStmt.run(classIdInt, sectionInt);
+            await sql`DELETE FROM students WHERE class_id = ${classIdInt} AND section_number = ${sectionInt}`;
 
             // 새로운 학생 데이터 삽입
-            for (const student of studentList) {
-                insertStmt.run(
-                    classIdInt,
-                    sectionInt,
-                    student.name,
-                    student.gender,
-                    student.is_problem_student ? 1 : 0,
-                    student.is_special_class ? 1 : 0,
-                    student.group_name || null,
-                    student.rank || null,
-                    student.birth_date || null,
-                    student.contact || null,
-                    student.notes || null,
-                    student.is_underachiever ? 1 : 0
-                );
+            for (const student of students) {
+                await sql`INSERT INTO students (class_id, section_number, name, gender, is_problem_student, is_special_class, group_name, rank, birth_date, contact, notes, is_underachiever)
+                         VALUES (${classIdInt}, ${sectionInt}, ${student.name}, ${student.gender}, ${student.is_problem_student ? 1 : 0}, ${student.is_special_class ? 1 : 0}, ${student.group_name || null}, ${student.rank || null}, ${student.birth_date || null}, ${student.contact || null}, ${student.notes || null}, ${student.is_underachiever ? 1 : 0})`;
             }
         });
-
-        saveStudents(students);
 
         return NextResponse.json({ success: true, count: students.length });
     } catch (error) {
@@ -84,15 +63,12 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'classId is required' }, { status: 400 });
         }
 
-        let stmt;
         let students;
 
         if (section) {
-            stmt = db.prepare('SELECT * FROM students WHERE class_id = ? AND section_number = ? ORDER BY id');
-            students = stmt.all(classId, section);
+            students = await sql`SELECT * FROM students WHERE class_id = ${classId} AND section_number = ${section} ORDER BY id`;
         } else {
-            stmt = db.prepare('SELECT * FROM students WHERE class_id = ? ORDER BY id');
-            students = stmt.all(classId);
+            students = await sql`SELECT * FROM students WHERE class_id = ${classId} ORDER BY id`;
         }
 
         return NextResponse.json(students);
@@ -106,8 +82,7 @@ export async function DELETE(request: NextRequest) {
     try {
         const { id } = await request.json();
 
-        const stmt = db.prepare('DELETE FROM students WHERE id = ?');
-        stmt.run(id);
+        await sql`DELETE FROM students WHERE id = ${id}`;
 
         return NextResponse.json({ success: true });
     } catch (error) {

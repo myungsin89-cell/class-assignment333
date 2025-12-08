@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import db from '@/lib/db';
+import sql from '@/lib/db';
 
 export async function POST(request: NextRequest) {
     try {
@@ -9,10 +9,9 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'school_id is required' }, { status: 400 });
         }
 
-        const stmt = db.prepare('INSERT INTO classes (school_id, grade, section_count) VALUES (?, ?, ?)');
-        const result = stmt.run(school_id, grade, section_count);
+        const result = await sql`INSERT INTO classes (school_id, grade, section_count) VALUES (${school_id}, ${grade}, ${section_count}) RETURNING id`;
 
-        return NextResponse.json({ id: result.lastInsertRowid, school_id, grade, section_count });
+        return NextResponse.json({ id: result[0].id, school_id, grade, section_count });
     } catch (error: any) {
         console.error('Error creating class:', error);
         return NextResponse.json({ error: 'Failed to create class', details: error.message }, { status: 500 });
@@ -28,18 +27,16 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'schoolId parameter is required' }, { status: 400 });
         }
 
-        const stmt = db.prepare('SELECT * FROM classes WHERE school_id = ? ORDER BY created_at DESC');
-        const classes = stmt.all(schoolId) as any[];
+        const classes = await sql`SELECT * FROM classes WHERE school_id = ${schoolId} ORDER BY created_at DESC`;
 
         // 각 클래스에 대해 child class가 있는지 확인
-        const childStmt = db.prepare('SELECT COUNT(*) as count FROM classes WHERE parent_class_id = ?');
-        const classesWithChildInfo = classes.map(classData => {
-            const childResult = childStmt.get(classData.id) as { count: number };
+        const classesWithChildInfo = await Promise.all(classes.map(async (classData) => {
+            const childResult = await sql`SELECT COUNT(*) as count FROM classes WHERE parent_class_id = ${classData.id}`;
             return {
                 ...classData,
-                has_child_classes: childResult.count > 0
+                has_child_classes: Number(childResult[0].count) > 0
             };
-        });
+        }));
 
         return NextResponse.json(classesWithChildInfo);
     } catch (error) {
@@ -59,26 +56,23 @@ export async function DELETE(request: NextRequest) {
         }
 
         // Verify that the class belongs to this school
-        const verifyStmt = db.prepare('SELECT * FROM classes WHERE id = ? AND school_id = ?');
-        const classData = verifyStmt.get(classId, schoolId);
+        const classDataResult = await sql`SELECT * FROM classes WHERE id = ${classId} AND school_id = ${schoolId}`;
+        const classData = classDataResult[0];
 
         if (!classData) {
             return NextResponse.json({ error: 'Class not found or unauthorized' }, { status: 404 });
         }
 
         // Check if this class has child classes (반편성된 클래스)
-        const childStmt = db.prepare('SELECT id FROM classes WHERE parent_class_id = ?');
-        const childClasses = childStmt.all(classId) as { id: number }[];
+        const childClasses = await sql`SELECT id FROM classes WHERE parent_class_id = ${classId}`;
 
         // Delete all child classes first (if any)
         if (childClasses.length > 0) {
-            const deleteChildStmt = db.prepare('DELETE FROM classes WHERE parent_class_id = ?');
-            deleteChildStmt.run(classId);
+            await sql`DELETE FROM classes WHERE parent_class_id = ${classId}`;
         }
 
         // Delete the class (students will be deleted automatically due to CASCADE)
-        const deleteStmt = db.prepare('DELETE FROM classes WHERE id = ?');
-        deleteStmt.run(classId);
+        await sql`DELETE FROM classes WHERE id = ${classId}`;
 
         const message = childClasses.length > 0
             ? `학급과 반편성된 ${childClasses.length}개의 새로운반이 모두 삭제되었습니다.`

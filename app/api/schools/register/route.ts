@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import db from '@/lib/db';
+import sql from '@/lib/db';
 import bcrypt from 'bcrypt';
 
 export async function POST(request: NextRequest) {
@@ -22,9 +22,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if school already exists
-    const existingSchool = db.prepare('SELECT id FROM schools WHERE name = ?').get(name);
-    
-    if (existingSchool) {
+    const existingSchool = await sql`
+      SELECT id FROM schools WHERE name = ${name}
+    `;
+
+    if (existingSchool.length > 0) {
       return NextResponse.json(
         { error: '이미 등록된 학교 이름입니다.' },
         { status: 409 }
@@ -35,13 +37,16 @@ export async function POST(request: NextRequest) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Insert new school
-    const stmt = db.prepare('INSERT INTO schools (name, password) VALUES (?, ?)');
-    const result = stmt.run(name, hashedPassword);
+    const result = await sql`
+      INSERT INTO schools (name, password)
+      VALUES (${name}, ${hashedPassword})
+      RETURNING id
+    `;
 
     return NextResponse.json(
-      { 
+      {
         message: '학교가 성공적으로 등록되었습니다.',
-        schoolId: result.lastInsertRowid 
+        schoolId: result[0].id
       },
       { status: 201 }
     );

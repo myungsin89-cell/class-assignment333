@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import db from '@/lib/db';
+import sql from '@/lib/db';
 
 export async function GET(
     request: NextRequest,
@@ -7,16 +7,16 @@ export async function GET(
 ) {
     try {
         const { id } = await context.params;
-        const stmt = db.prepare('SELECT * FROM classes WHERE id = ?');
-        const classData = stmt.get(id) as any;
+        const classDataResult = await sql`SELECT * FROM classes WHERE id = ${id}`;
+        const classData = classDataResult[0] as any;
 
         if (!classData) {
             return NextResponse.json({ error: 'Class not found' }, { status: 404 });
         }
 
         // 이 클래스로부터 생성된 분산 클래스(자식 클래스)가 있는지 확인
-        const childStmt = db.prepare('SELECT id FROM classes WHERE parent_class_id = ? ORDER BY id DESC LIMIT 1');
-        const childClass = childStmt.get(id) as any;
+        const childClassResult = await sql`SELECT id FROM classes WHERE parent_class_id = ${id} ORDER BY id DESC LIMIT 1`;
+        const childClass = childClassResult[0] as any;
 
         if (childClass) {
             classData.child_class_id = childClass.id;
@@ -43,8 +43,8 @@ export async function PATCH(
         }
 
         // 현재 section_statuses 가져오기
-        const stmt = db.prepare('SELECT section_statuses FROM classes WHERE id = ?');
-        const classData = stmt.get(id) as any;
+        const classDataResult = await sql`SELECT section_statuses FROM classes WHERE id = ${id}`;
+        const classData = classDataResult[0] as any;
 
         if (!classData) {
             return NextResponse.json({ error: 'Class not found' }, { status: 404 });
@@ -62,8 +62,7 @@ export async function PATCH(
         statuses[section.toString()] = status;
 
         // DB 업데이트
-        const updateStmt = db.prepare('UPDATE classes SET section_statuses = ? WHERE id = ?');
-        updateStmt.run(JSON.stringify(statuses), id);
+        await sql`UPDATE classes SET section_statuses = ${JSON.stringify(statuses)} WHERE id = ${id}`;
 
         return NextResponse.json({ success: true, section_statuses: statuses });
     } catch (error) {

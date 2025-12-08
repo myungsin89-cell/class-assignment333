@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import db from '@/lib/db';
+import sql from '@/lib/db';
 import bcrypt from 'bcrypt';
 
 export async function POST(request: NextRequest) {
@@ -15,15 +15,18 @@ export async function POST(request: NextRequest) {
     }
 
     // Find school by name
-    const school = db.prepare('SELECT id, name, password FROM schools WHERE name = ?').get(name) as 
-      { id: number; name: string; password: string } | undefined;
+    const schools = await sql`
+      SELECT id, name, password FROM schools WHERE name = ${name}
+    `;
 
-    if (!school) {
+    if (schools.length === 0) {
       return NextResponse.json(
         { error: '학교를 찾을 수 없습니다.' },
         { status: 404 }
       );
     }
+
+    const school = schools[0];
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, school.password);
@@ -36,7 +39,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      { 
+      {
         message: '로그인 성공',
         schoolId: school.id,
         schoolName: school.name

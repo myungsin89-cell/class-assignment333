@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import db from '@/lib/db';
+import sql from '@/lib/db';
 
 interface Student {
     id: number;
@@ -22,17 +22,15 @@ export async function POST(request: NextRequest) {
         }
 
         // 기존 클래스 정보 가져오기
-        const classInfo: any = db.prepare('SELECT * FROM classes WHERE id = ? AND school_id = ?')
-            .get(classId, schoolId);
+        const classInfoResult = await sql`SELECT * FROM classes WHERE id = ${classId} AND school_id = ${schoolId}`;
+        const classInfo: any = classInfoResult[0];
 
         if (!classInfo) {
             return NextResponse.json({ error: 'Class not found' }, { status: 404 });
         }
 
         // 모든 반의 학생 가져오기 (반별로 그룹화)
-        const allStudents: Student[] = db.prepare(
-            'SELECT * FROM students WHERE class_id = ? ORDER BY section_number, gender, rank ASC, name'
-        ).all(classId) as Student[];
+        const allStudents: Student[] = await sql`SELECT * FROM students WHERE class_id = ${classId} ORDER BY section_number, gender, rank ASC, name`;
 
         if (allStudents.length === 0) {
             return NextResponse.json({ error: 'No students found' }, { status: 400 });
@@ -153,37 +151,19 @@ export async function POST(request: NextRequest) {
         });
 
         // 새로운 클래스 생성 (반편성 표시 및 원본 클래스 ID 저장)
-        const insertClass = db.prepare(
-            'INSERT INTO classes (school_id, grade, section_count, is_distributed, parent_class_id) VALUES (?, ?, ?, ?, ?)'
-        );
-        const result = insertClass.run(schoolId, classInfo.grade, newSectionCount, 1, classId);
-        const newClassId = result.lastInsertRowid;
+        const result = await sql`INSERT INTO classes (school_id, grade, section_count, is_distributed, parent_class_id) VALUES (${schoolId}, ${classInfo.grade}, ${newSectionCount}, ${1}, ${classId}) RETURNING id`;
+        const newClassId = result[0].id;
 
         // 학생들을 새 클래스에 배치 (이전 반 번호 저장)
-        const insertStudent = db.prepare(
-            `INSERT INTO students (class_id, section_number, name, gender, is_problem_student, is_special_class, group_name, rank, previous_section)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        );
-
-        const insertAllStudents = db.transaction(() => {
-            sections.forEach((sectionStudents, sectionIndex) => {
-                sectionStudents.forEach(student => {
-                    insertStudent.run(
-                        newClassId,
-                        sectionIndex + 1,
-                        student.name,
-                        student.gender,
-                        student.is_problem_student,
-                        student.is_special_class,
-                        student.group_name,
-                        student.rank,
-                        (student as any).section_number // 원래 반 번호를 이전 반으로 저장
-                    );
-                });
-            });
+        // PostgreSQL에서는 transaction을 사용하여 모든 INSERT를 한번에 처리
+        await sql.begin(async (sql) => {
+            for (const [sectionIndex, sectionStudents] of sections.entries()) {
+                for (const student of sectionStudents) {
+                    await sql`INSERT INTO students (class_id, section_number, name, gender, is_problem_student, is_special_class, group_name, rank, previous_section)
+                             VALUES (${newClassId}, ${sectionIndex + 1}, ${student.name}, ${student.gender}, ${student.is_problem_student}, ${student.is_special_class}, ${student.group_name}, ${student.rank}, ${(student as any).section_number})`;
+                }
+            }
         });
-
-        insertAllStudents();
 
         // 반별 통계 생성
         const stats = sections.map((students, index) => ({
