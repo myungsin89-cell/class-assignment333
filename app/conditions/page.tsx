@@ -2543,13 +2543,66 @@ function OuterGroupCreationModal({ type = 'outer', allStudents, existingGroupNam
                     <input
                         type="text"
                         className="form-input"
-                        placeholder="예: 학교폭력, 학부모 요청"
+                        placeholder={type === 'outer' ? "예: 학교폭력, 학부모 요청" : "예: 쌍둥이, 친한친구"}
                         value={groupName}
                         onChange={(e) => setGroupName(e.target.value)}
                         autoFocus
                         style={{ width: '100%', padding: '0.75rem', fontSize: '1rem' }}
                     />
                 </div>
+
+                {/* 선택된 학생 미리보기 */}
+                {selectedStudents.length > 0 && (
+                    <div style={{
+                        padding: '1.5rem 2rem',
+                        borderBottom: '1px solid #334155',
+                        background: '#0f172a'
+                    }}>
+                        <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.9rem', color: '#e2e8f0', fontWeight: 600 }}>
+                            선택된 학생 ({selectedStudents.length}명)
+                        </p>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                            {selectedStudents.map((student, index) => (
+                                <div
+                                    key={index}
+                                    style={{
+                                        background: '#1e293b',
+                                        padding: '0.4rem 0.8rem',
+                                        borderRadius: '6px',
+                                        border: '1px solid #334155',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem',
+                                        fontSize: '0.85rem'
+                                    }}
+                                >
+                                    <span style={{ color: '#94a3b8' }}>[{student.section_number}반]</span>
+                                    <span style={{
+                                        color: student.gender === 'M' ? '#60a5fa' : '#f472b6',
+                                        fontWeight: 600
+                                    }}>
+                                        {student.name}
+                                    </span>
+                                    <button
+                                        onClick={() => handleToggleStudent(student)}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            color: '#94a3b8',
+                                            fontSize: '1rem',
+                                            padding: 0,
+                                            display: 'flex',
+                                            alignItems: 'center'
+                                        }}
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* 학생 검색 */}
                 <div style={{
@@ -2631,59 +2684,6 @@ function OuterGroupCreationModal({ type = 'outer', allStudents, existingGroupNam
                         </div>
                     )}
                 </div>
-
-                {/* 선택된 학생 미리보기 */}
-                {selectedStudents.length > 0 && (
-                    <div style={{
-                        padding: '1.5rem 2rem',
-                        borderTop: '1px solid #334155',
-                        background: '#0f172a'
-                    }}>
-                        <p style={{ margin: '0 0 0.75rem 0', fontSize: '0.9rem', color: '#e2e8f0', fontWeight: 600 }}>
-                            선택된 학생 ({selectedStudents.length}명)
-                        </p>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            {selectedStudents.map((student, index) => (
-                                <div
-                                    key={index}
-                                    style={{
-                                        background: '#1e293b',
-                                        padding: '0.4rem 0.8rem',
-                                        borderRadius: '6px',
-                                        border: '1px solid #334155',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: '0.5rem',
-                                        fontSize: '0.85rem'
-                                    }}
-                                >
-                                    <span style={{ color: '#94a3b8' }}>[{student.section_number}반]</span>
-                                    <span style={{
-                                        color: student.gender === 'M' ? '#60a5fa' : '#f472b6',
-                                        fontWeight: 600
-                                    }}>
-                                        {student.name}
-                                    </span>
-                                    <button
-                                        onClick={() => handleToggleStudent(student)}
-                                        style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            cursor: 'pointer',
-                                            color: '#94a3b8',
-                                            fontSize: '1rem',
-                                            padding: 0,
-                                            display: 'flex',
-                                            alignItems: 'center'
-                                        }}
-                                    >
-                                        ×
-                                    </button>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
 
                 {/* 하단 버튼 */}
                 <div style={{
