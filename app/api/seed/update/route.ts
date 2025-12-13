@@ -29,7 +29,7 @@ export async function POST() {
         let updateCount = 0;
 
         // Group by section and gender
-        const sections = {};
+        const sections: Record<string, any[]> = {};
         for (const s of students) {
             const key = `${s.section_number}-${s.gender}`;
             if (!sections[key]) sections[key] = [];
