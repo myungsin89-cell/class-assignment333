@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>학생 관리 시스템 - 자동 배포</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 32px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+
+        .info-box {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 30px;
+            border-radius: 5px;
+        }
+
+        .info-box h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .info-box ul {
+            margin-left: 20px;
+            color: #555;
+        }
+
+        .info-box li {
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e1e4e8;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .deploy-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-bottom: 15px;
+        }
+
+        .deploy-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .deploy-btn:active {
+            transform: translateY(0);
+        }
+
+        .quick-deploy {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #e1e4e8;
+        }
+
+        .quick-deploy h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .vercel-btn {
+            display: inline-block;
+            padding: 12px 30px;
+            background: black;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        .vercel-btn:hover {
+            background: #333;
+        }
+
+        .env-item {
+            background: white;
+            border: 1px solid #e1e4e8;
+            border-radius: 5px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+
+        .env-label {
+            font-weight: 600;
+            color: #667eea;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+
+        .env-value {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #333;
+            word-break: break-all;
+            background: #f6f8fa;
+            padding: 8px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        .copy-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 5px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .copy-btn:hover {
+            background: #5568d3;
+        }
+
+        .copy-btn.copied {
+            background: #10b981;
+        }
+
+        /* 팝업 오버레이 */
+        .popup-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .popup-overlay.show {
+            display: flex;
+        }
+
+        .popup-content {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .popup-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .popup-title {
+            color: #667eea;
+            font-size: 24px;
+            font-weight: bold;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: #999;
+            line-height: 1;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+        }
+
+        .close-btn:hover {
+            color: #333;
+        }
+
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+            color: #856404;
+            font-size: 14px;
+        }
+
+        .step {
+            display: flex;
+            align-items: start;
+            margin-bottom: 15px;
+        }
+
+        .step-number {
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 15px;
+            flex-shrink: 0;
+        }
+
+        .step-content {
+            flex: 1;
+        }
+
+        .step-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .step-desc {
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎓 학생 관리 시스템</h1>
+        <p class="subtitle">클릭 한 번으로 나만의 앱을 배포하세요</p>
+
+        <div class="info-box">
+            <h3>📦 포함된 기능</h3>
+            <ul>
+                <li>학생 정보 관리 시스템</li>
+                <li>PostgreSQL 데이터베이스 (Neon 연동)</li>
+                <li>Next.js 14 기반</li>
+                <li>완전히 독립적인 배포</li>
+            </ul>
+        </div>
+
+        <div class="info-box">
+            <h3>🚀 배포 가이드 (순서대로 진행하세요)</h3>
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <div class="step-title">Neon Console 접속</div>
+                    <div class="step-desc">Google 로그인 → 데이터베이스 생성</div>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <div class="step-title">DATABASE_URL 복사</div>
+                    <div class="step-desc">Connection String을 이 페이지에 붙여넣기</div>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <div class="step-title">Vercel 배포</div>
+                    <div class="step-desc">배포 버튼 클릭 → 팝업의 환경 변수 복사</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 1: GitHub URL -->
+        <div class="info-box" style="background: #e8f4f8; border-color: #667eea;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                <div style="background: #667eea; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;">1</div>
+                <h3 style="color: #667eea; margin: 0;">GitHub 저장소</h3>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <input
+                    type="text"
+                    id="github-url"
+                    placeholder="https://github.com/choimin1243/first123"
+                    value="https://github.com/choimin1243/first123/tree/song"
+                >
+            </div>
+        </div>
+
+        <!-- Step 2: Neon DB -->
+        <div class="info-box" style="background: #fff9e6; border-color: #ffc107;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                <div style="background: #ffc107; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;">2</div>
+                <h3 style="color: #f59e0b; margin: 0;">Neon 데이터베이스 생성</h3>
+            </div>
+            <button class="deploy-btn" onclick="openNeonConsole()" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); margin-bottom: 15px;">
+                🔗 Neon Console 열기
+            </button>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="database-url">DATABASE_URL 입력</label>
+                <input
+                    type="text"
+                    id="database-url"
+                    placeholder="1. Neon Console에서 Google 로그인 → 2. 프로젝트 생성 → 3. Connection String 복사 → 4. 여기에 붙여넣기"
+                >
+                <small style="color: #856404; font-size: 12px; display: block; margin-top: 5px;">
+                    ⚠️ 먼저 위의 "Neon Console 열기" 버튼을 클릭해서 데이터베이스를 생성하세요
+                </small>
+            </div>
+        </div>
+
+        <!-- Step 3: API Key (Optional) -->
+        <div class="info-box" style="background: #f3f4f6; border-color: #9ca3af;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                <div style="background: #9ca3af; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold;">3</div>
+                <h3 style="color: #6b7280; margin: 0;">API Key (선택사항)</h3>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <input
+                    type="text"
+                    id="api-key"
+                    placeholder="CG-xxxxxxxxxxxxxxxxxxxx (비워두어도 됩니다)"
+                >
+                <small style="color: #6b7280; font-size: 12px; display: block; margin-top: 5px;">
+                    💡 CoinGecko 무료 버전은 API 키가 필요 없습니다
+                </small>
+            </div>
+        </div>
+
+        <!-- Step 4: Deploy -->
+        <div style="margin-top: 20px;">
+            <button class="deploy-btn" onclick="deployToVercel()" id="deploy-button">
+                🚀 Vercel에 배포하기
+            </button>
+        </div>
+
+        <div class="warning">
+            <strong>📋 배포 순서:</strong><br>
+            1️⃣ <strong>Neon Console 열기</strong> → Google 로그인 → DB 생성<br>
+            2️⃣ <strong>DATABASE_URL 복사</strong> → 위의 입력란에 붙여넣기<br>
+            3️⃣ <strong>API Key 입력</strong> (선택사항)<br>
+            4️⃣ <strong>배포 버튼 클릭</strong> → Vercel에서 자동 배포 시작<br>
+            5️⃣ <strong>팝업창에서 환경 변수 복사</strong> → Vercel에 붙여넣기
+        </div>
+
+    </div>
+
+    <!-- 팝업창 -->
+    <div id="popup-overlay" class="popup-overlay" onclick="closePopup(event)">
+        <div class="popup-content" onclick="event.stopPropagation()">
+            <div class="popup-header">
+                <h2 class="popup-title">📋 환경 변수 값</h2>
+                <button class="close-btn" onclick="closePopup()">&times;</button>
+            </div>
+
+            <p style="color: #666; margin-bottom: 20px;">
+                ✅ Vercel 페이지가 새 창에 열렸습니다<br>
+                👇 아래 값들을 복사해서 Vercel의 환경 변수 필드에 붙여넣으세요
+            </p>
+
+            <div class="env-item">
+                <div class="env-label">DATABASE_URL</div>
+                <div id="popup-db-url" class="env-value"></div>
+                <button class="copy-btn" onclick="copyToClipboard('popup-db-url', this)">📋 복사</button>
+            </div>
+
+            <div class="env-item" id="popup-api-key-item">
+                <div class="env-label">NEXT_PUBLIC_COINGECKO_API_KEY</div>
+                <div id="popup-api-key" class="env-value"></div>
+                <button class="copy-btn" onclick="copyToClipboard('popup-api-key', this)">📋 복사</button>
+            </div>
+
+            <div style="margin-top: 20px; padding: 15px; background: #f0f9ff; border-radius: 8px; border-left: 4px solid #667eea;">
+                <strong style="color: #667eea;">📝 다음 단계:</strong><br>
+                <ol style="margin: 10px 0 0 20px; color: #555;">
+                    <li>Vercel 페이지에서 DATABASE_URL 필드 클릭</li>
+                    <li>위의 "📋 복사" 버튼으로 값 복사 후 붙여넣기</li>
+                    <li>Deploy 버튼 클릭!</li>
+                </ol>
+                <p style="margin: 10px 0 0 0; color: #666; font-size: 13px;">
+                    💡 <strong>API Key는 나중에 추가 가능:</strong> Vercel Dashboard → Settings → Environment Variables
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openNeonConsole() {
+            // Neon Console 열기
+            window.open('https://console.neon.tech/', '_blank');
+
+            // 안내 메시지
+            setTimeout(() => {
+                alert('📝 Neon Console 사용 가이드:\n\n1. Google 계정으로 로그인\n2. "Create a project" 클릭\n3. 프로젝트 이름 입력 (예: my-student-system)\n4. 생성 완료 후 "Connection Details" 섹션 찾기\n5. "Connection string" 복사\n6. 이 페이지로 돌아와서 DATABASE_URL에 붙여넣기');
+            }, 1000);
+        }
+
+        function deployToVercel() {
+            const githubUrl = document.getElementById('github-url').value.trim();
+            const databaseUrl = document.getElementById('database-url').value.trim();
+            const apiKey = document.getElementById('api-key').value.trim();
+
+            // GitHub URL 검증
+            if (!githubUrl.includes('github.com')) {
+                alert('올바른 GitHub URL을 입력해주세요');
+                return;
+            }
+
+            // DATABASE_URL 검증
+            if (!databaseUrl) {
+                const openNeon = confirm('⚠️ DATABASE_URL이 입력되지 않았습니다!\n\n순서:\n1. "Neon Console 열기" 버튼 클릭\n2. Google 로그인\n3. 데이터베이스 생성\n4. Connection String 복사\n5. DATABASE_URL 필드에 붙여넣기\n\n지금 Neon Console을 여시겠습니까?');
+
+                if (openNeon) {
+                    openNeonConsole();
+                }
+                return;
+            }
+
+            if (!databaseUrl.startsWith('postgresql://')) {
+                alert('올바른 PostgreSQL 연결 문자열을 입력해주세요\n\n형식: postgresql://username:password@host/database');
+                return;
+            }
+
+            // GitHub URL에서 필요한 정보 추출
+            const repoPath = githubUrl.replace('https://github.com/', '').replace('.git', '');
+            const repoName = repoPath.split('/').pop();
+
+            // Vercel Deploy URL 생성
+            const deployUrl = new URL('https://vercel.com/new/clone');
+            deployUrl.searchParams.set('repository-url', githubUrl);
+            deployUrl.searchParams.set('repository-name', repoName);
+            deployUrl.searchParams.set('project-name', repoName);
+
+            // 환경 변수 이름 지정 (DATABASE_URL만 필수)
+            deployUrl.searchParams.set('env', 'DATABASE_URL');
+
+            // 환경 변수 값 직접 전달
+            deployUrl.searchParams.set('envDescription', 'Enter your Neon DATABASE_URL. API key is optional and can be added later in Vercel dashboard.');
+            deployUrl.searchParams.set('envLink', `${githubUrl}/blob/song/README.md`);
+
+            // 팝업에 환경 변수 값 표시
+            document.getElementById('popup-db-url').textContent = databaseUrl;
+            document.getElementById('popup-api-key').textContent = apiKey || '(비워두어도 됩니다)';
+
+            // API 키가 없으면 해당 항목 숨김
+            if (!apiKey) {
+                document.getElementById('popup-api-key-item').style.display = 'none';
+            } else {
+                document.getElementById('popup-api-key-item').style.display = 'block';
+            }
+
+            // 새 창에서 Vercel 배포 페이지 열기
+            window.open(deployUrl.toString(), '_blank');
+
+            // 팝업 표시
+            document.getElementById('popup-overlay').classList.add('show');
+        }
+
+        function closePopup(event) {
+            // 오버레이를 클릭했거나 닫기 버튼을 클릭한 경우에만 닫기
+            if (!event || event.target.id === 'popup-overlay' || event.target.className === 'close-btn') {
+                document.getElementById('popup-overlay').classList.remove('show');
+            }
+        }
+
+        function copyToClipboard(elementId, button) {
+            const text = document.getElementById(elementId).textContent;
+
+            if (text === '(비워두어도 됩니다)') {
+                alert('이 필드는 비워두어도 됩니다');
+                return;
+            }
+
+            navigator.clipboard.writeText(text).then(() => {
+                // 버튼 텍스트 변경
+                const originalText = button.textContent;
+                button.textContent = '✅ 복사됨!';
+                button.classList.add('copied');
+
+                // 2초 후 원래대로
+                setTimeout(() => {
+                    button.textContent = originalText;
+                    button.classList.remove('copied');
+                }, 2000);
+            }).catch(() => {
+                alert('복사 실패! 수동으로 복사해주세요:\n' + text);
+            });
+        }
+
+        // Enter 키로도 배포 가능하도록
+        document.getElementById('github-url').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                deployToVercel();
+            }
+        });
+    </script>
+</body>
+</html>

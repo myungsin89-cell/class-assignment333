@@ -1,0 +1,104 @@
+﻿
+> first@0.1.0 lint
+> eslint
+
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\add-child-class-column.js
+  1:18  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+  2:14  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\add-columns-to-neon.js
+  1:18  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\app\api\classes\[id]\route.ts
+   52:22  warning  '_e' is defined but never used            @typescript-eslint/no-unused-vars
+  102:18  warning  '_columnError' is defined but never used  @typescript-eslint/no-unused-vars
+  160:18  warning  '_e' is defined but never used            @typescript-eslint/no-unused-vars
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\app\api\classes\[id]\save-allocation\route.ts
+  9:17  warning  'id' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\app\api\init-db\route.ts
+  8:27  warning  'request' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\app\api\students\route.ts
+   41:18  warning  '_e' is defined but never used                             @typescript-eslint/no-unused-vars
+  132:22  warning  '_e' is defined but never used                             @typescript-eslint/no-unused-vars
+  136:19  warning  '_currentSectionCount' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\app\classes\[id]\allocation\page.tsx
+   65:19  warning  '_' is defined but never used                                                                                    @typescript-eslint/no-unused-vars
+   86:19  warning  '_' is defined but never used                                                                                    @typescript-eslint/no-unused-vars
+  110:10  warning  'splitIntoColumns' is defined but never used                                                                     @typescript-eslint/no-unused-vars
+  125:10  warning  'getSectionColor' is defined but never used                                                                      @typescript-eslint/no-unused-vars
+  399:8   warning  React Hook useMemo has a missing dependency: 'getSectionName'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  433:14  warning  'getStudentStyle' is defined but never used                                                                      @typescript-eslint/no-unused-vars
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\app\classes\[id]\page.tsx
+   6:5   warning  'ChartBarIcon' is defined but never used                                                                          @typescript-eslint/no-unused-vars
+   7:5   warning  'UserGroupIcon' is defined but never used                                                                         @typescript-eslint/no-unused-vars
+   8:5   warning  'ClipboardDocumentCheckIcon' is defined but never used                                                            @typescript-eslint/no-unused-vars
+   9:5   warning  'ArrowRightIcon' is defined but never used                                                                        @typescript-eslint/no-unused-vars
+  38:8   warning  React Hook useEffect has a missing dependency: 'loadClassData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  50:22  warning  'e' is defined but never used                                                                                     @typescript-eslint/no-unused-vars
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\app\conditions\page.tsx
+    92:50  warning  'grade' is defined but never used                                                                            @typescript-eslint/no-unused-vars
+   110:8   warning  React Hook useEffect has a missing dependency: 'loadData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  2099:10  warning  'DraggableStudent' is defined but never used                                                                 @typescript-eslint/no-unused-vars
+  2248:19  warning  '_' is defined but never used                                                                                @typescript-eslint/no-unused-vars
+  2266:19  warning  '_' is defined but never used                                                                                @typescript-eslint/no-unused-vars
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\app\students\StudentsPageInner.tsx
+   71:12  warning  'parentClassData' is assigned a value but never used                                                                                  @typescript-eslint/no-unused-vars
+   90:8   warning  React Hook useEffect has a missing dependency: 'loadClassData'. Either include it or remove the dependency array                      react-hooks/exhaustive-deps
+  100:22  warning  'e' is defined but never used                                                                                                         @typescript-eslint/no-unused-vars
+  114:22  warning  'e' is defined but never used                                                                                                         @typescript-eslint/no-unused-vars
+  241:8   warning  React Hook useEffect has missing dependencies: 'loadStudents' and 'loadTempData'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  545:11  warning  'handleSave' is assigned a value but never used                                                                                       @typescript-eslint/no-unused-vars
+  595:11  warning  'navigateToSection' is assigned a value but never used                                                                                @typescript-eslint/no-unused-vars
+  691:11  warning  'stats' is assigned a value but never used                                                                                            @typescript-eslint/no-unused-vars
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\check-db.js
+  1:18  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\check-saved-data.js
+  1:18  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\check-schema.js
+  1:18  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\components\GlobalAlert.tsx
+  83:8  warning  React Hook useCallback has a missing dependency: 'modal'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\lib\algorithm.ts
+    1:19  warning  'ClassData' is defined but never used                   @typescript-eslint/no-unused-vars
+   82:10  warning  'groupBindStudents' is defined but never used           @typescript-eslint/no-unused-vars
+   99:31  warning  'groupName' is defined but never used                   @typescript-eslint/no-unused-vars
+  286:50  warning  'oldSection' is defined but never used                  @typescript-eslint/no-unused-vars
+  608:15  warning  'isOverallBalanced' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  761:39  warning  'newCurrentMax' is assigned a value but never used      @typescript-eslint/no-unused-vars
+  762:39  warning  'newCurrentMin' is assigned a value but never used      @typescript-eslint/no-unused-vars
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\migrate-db.js
+  1:18  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\neon-connect.js
+  1:18  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\scripts\generate-sample-data.ts
+  78:13  error  'schoolResult' is never reassigned. Use 'const' instead  prefer-const
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\scripts\migrate_v2.js
+  1:18  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+  2:14  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\scripts\populate_test_data.js
+  126:24  error  Parsing error: ',' expected
+
+C:\Users\User\Desktop\肄붾뵫怨듬?\諛섎같?뺥봽濡쒓렇??諛섎같?뺥봽濡쒓렇??12.13)\諛섎같?뺥봽濡쒓렇??12.9)\first123\first123\test-api-query.js
+  1:18  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+??54 problems (13 errors, 41 warnings)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+
