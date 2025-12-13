@@ -108,8 +108,8 @@ export default function Home() {
             margin: '0 auto 2.5rem',
             lineHeight: 1.7
           }}>
-            지그재그 알고리즘으로 학생들의 실력을 균등하게 분배하고,<br />
-            여러 선생님이 함께 협업하여 공정한 반배정을 실현합니다.
+            복잡한 학생 배분은 자동으로,<br />
+            선생님들은 협업하여 더 쉽고 빠르게 반배정을 끝내세요.
           </p>
           <div className="fade-in" style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
