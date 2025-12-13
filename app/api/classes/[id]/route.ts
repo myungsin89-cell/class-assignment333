@@ -173,3 +173,23 @@ export async function PATCH(
         return NextResponse.json({ error: 'Failed to update section status' }, { status: 500 });
     }
 }
+
+export async function DELETE(
+    request: NextRequest,
+    context: { params: Promise<{ id: string }> }
+) {
+    try {
+        const { id } = await context.params;
+
+        // 먼저 해당 반의 학생들 삭제
+        await sql`DELETE FROM students WHERE class_id = ${id}`;
+
+        // 그 다음 반 정보 삭제
+        await sql`DELETE FROM classes WHERE id = ${id}`;
+
+        return NextResponse.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting class:', error);
+        return NextResponse.json({ error: 'Failed to delete class' }, { status: 500 });
+    }
+}

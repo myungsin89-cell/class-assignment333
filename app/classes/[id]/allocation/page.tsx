@@ -191,6 +191,11 @@ export default function AllocationPage() {
     const [showBindModal, setShowBindModal] = useState(false);
     const [showSpecialModal, setShowSpecialModal] = useState(false);
     const [showDuplicateNamesModal, setShowDuplicateNamesModal] = useState(false);
+    const [showWorkCompleteModal, setShowWorkCompleteModal] = useState(false);
+    const [isSaving, setIsSaving] = useState(false); // 저장 로딩 상태
+
+    // 클릭된 분리/결합 학생 정보
+    const [clickedBindStudent, setClickedBindStudent] = useState<Student | null>(null);
 
     // 데이터 로드
     useEffect(() => {
@@ -869,6 +874,21 @@ export default function AllocationPage() {
     const performSave = async (isManual: boolean) => {
         if (!allocation) return;
 
+        // Optimistic UI Update: 즉시 성공한 것처럼 처리하여 모달을 바로 띄움
+        if (isManual) {
+            setIsSaving(true);
+            // 1. 하이라이트 초기화
+            setHighlightedStudents(new Set());
+            // 2. 다른 모달 닫기
+            setShowSummary(false);
+            setConfirmModal(null);
+            // 3. 저장 완료 플래그 (즉시 활성화)
+            setIsSavedAllocation(true);
+            // 4. 작업 완료 모달만 표시 (즉시)
+            setShowWorkCompleteModal(true);
+            setIsSaving(false); // 모달이 떴으니 로딩 종료
+        }
+
         try {
             const allocations = allocation.classes.flatMap(cls =>
                 cls.students.map(s => ({
@@ -877,6 +897,7 @@ export default function AllocationPage() {
                 }))
             );
 
+            // 서버 저장은 백그라운드에서 실행
             const res = await fetch(`/api/classes/${classId}/save-allocation`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -884,19 +905,41 @@ export default function AllocationPage() {
             });
 
             if (!res.ok) throw new Error('Failed to save');
-            setIsSavedAllocation(true); // 저장 완료 플래그 설정
 
-            if (isManual) {
-                // 확정 저장 시 토스트 알림 및 하이라이트 초기화
-                setToast({ message: '배정 결과가 최종 확정되었습니다!', type: 'success' });
-                setHighlightedStudents(new Set()); // 하이라이트 초기화
-            } else {
-                // 자동 저장 시 콘솔 로그만
+            if (!isManual) {
+                // 자동 저장의 경우에만 로그 (수동 저장은 이미 UI 처리됨)
                 console.log('💾 배정 자동 저장 완료');
+                setIsSavedAllocation(true);
             }
         } catch (error) {
             console.error(error);
-            setToast({ message: '저장 중 오류가 발생했습니다.', type: 'error' });
+            // 수동 저장 실패 시 사용자에게 알림 및 상태 롤백
+            if (isManual) {
+                setToast({ message: '서버 저장에 실패했습니다. (인터넷 연결 확인)', type: 'error' });
+                // 롤백은 하지 않음 (엑셀 다운로드는 가능하게 유지) - 사용자 경험 우선
+            } else {
+                setToast({ message: '자동 저장 실패', type: 'error' });
+            }
+        }
+    };
+
+    // 데이터 삭제 (작업 완료)
+    const handleDeleteData = async () => {
+        if (!confirm('엑셀 파일을 다운로드 하셨나요?\n다운로드하지 않은 데이터는 복구할 수 없습니다.\n\n정말 현재 학년의 모든 데이터를 삭제하시겠습니까?')) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/classes/${classId}`, { method: 'DELETE' });
+            if (res.ok) {
+                alert('모든 데이터가 안전하게 삭제되었습니다.\n초기 화면으로 이동합니다.');
+                router.push('/');
+            } else {
+                throw new Error('Deletion failed');
+            }
+        } catch (error) {
+            console.error(error);
+            alert('삭제 중 오류가 발생했습니다.');
         }
     };
 
@@ -1755,8 +1798,16 @@ export default function AllocationPage() {
                         >
                             {reAllocating ? '🔄 편성 중...' : '🔄 다시 편성'}
                         </button>
-                        <button onClick={() => handleSave()} className="btn btn-primary">
-                            💾 확정 및 저장
+                        <button
+                            onClick={() => handleSave()}
+                            disabled={isSaving}
+                            className="btn btn-primary"
+                            style={{
+                                opacity: isSaving ? 0.7 : 1,
+                                cursor: isSaving ? 'wait' : 'pointer'
+                            }}
+                        >
+                            {isSaving ? '💾 저장 중...' : '💾 확정 및 저장'}
                         </button>
                         <button
                             onClick={handleExportExcel}
@@ -1780,6 +1831,29 @@ export default function AllocationPage() {
                             }}
                         >
                             📥 엑셀 다운로드
+                        </button>
+                        <button
+                            onClick={handleDeleteData}
+                            disabled={!isSavedAllocation}
+                            style={{
+                                padding: '0.75rem 1.25rem',
+                                background: isSavedAllocation
+                                    ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
+                                    : 'rgba(100, 116, 139, 0.3)',
+                                border: 'none',
+                                borderRadius: '8px',
+                                color: isSavedAllocation ? '#fff' : 'rgba(255,255,255,0.5)',
+                                fontSize: '0.9rem',
+                                fontWeight: '600',
+                                cursor: isSavedAllocation ? 'pointer' : 'not-allowed',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                transition: 'all 0.2s',
+                                opacity: isSavedAllocation ? 1 : 0.6
+                            }}
+                        >
+                            🗑️ 데이터 삭제
                         </button>
                     </div>
                 </div>
@@ -2196,6 +2270,109 @@ export default function AllocationPage() {
                         </div>
                     </div>
                 </div>
+
+                {/* 작업 완료 (데이터 삭제) 모달 */}
+                {showWorkCompleteModal && (
+                    <div style={{
+                        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        zIndex: 2000, backdropFilter: 'blur(5px)'
+                    }}>
+                        <div className="card" style={{ maxWidth: '600px', width: '90%', textAlign: 'center', padding: '2.5rem' }}>
+                            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎉</div>
+                            <h2 style={{ fontSize: '1.8rem', marginBottom: '0.5rem', color: 'var(--text-primary)' }}>반배정이 확정되었습니다!</h2>
+                            <p style={{ color: 'var(--text-secondary)', marginBottom: '2.5rem' }}>
+                                이제 결과를 엑셀 파일로 다운로드하고,<br />
+                                보안을 위해 데이터를 삭제할 수 있습니다.
+                            </p>
+
+                            {/* 1단계: 엑셀 다운로드 (강조) */}
+                            <div style={{ marginBottom: '3rem' }}>
+                                <button
+                                    onClick={handleExportExcel}
+                                    style={{
+                                        width: '100%',
+                                        padding: '1.25rem',
+                                        fontSize: '1.2rem',
+                                        fontWeight: 'bold',
+                                        color: '#fff',
+                                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                        border: 'none',
+                                        borderRadius: '12px',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.3)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '0.75rem',
+                                        transition: 'transform 0.2s'
+                                    }}
+                                    onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.02)'}
+                                    onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                                >
+                                    📥 엑셀 파일 다운로드
+                                </button>
+                                <p style={{ marginTop: '0.75rem', fontSize: '0.9rem', color: '#ef4444', fontWeight: 'bold' }}>
+                                    ⚠️ 삭제 전 반드시 다운로드하세요!
+                                </p>
+                            </div>
+
+                            {/* 구분선 */}
+                            <div style={{ borderTop: '1px solid var(--border)', margin: '0 0 2rem 0', position: 'relative' }}>
+                                <span style={{
+                                    position: 'absolute', top: '-0.8rem', left: '50%', transform: 'translateX(-50%)',
+                                    background: 'var(--bg-card)', padding: '0 1rem', color: 'var(--text-muted)', fontSize: '0.9rem'
+                                }}>
+                                    작업이 끝났다면?
+                                </span>
+                            </div>
+
+                            {/* 2단계: 데이터 삭제 (보안) */}
+                            <div style={{
+                                background: 'rgba(239, 68, 68, 0.05)',
+                                padding: '1.5rem',
+                                borderRadius: '12px',
+                                border: '1px solid rgba(239, 68, 68, 0.2)'
+                            }}>
+                                <h3 style={{ fontSize: '1.1rem', color: '#ef4444', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                                    ⚠️ 개인정보 보호를 위한 권장사항
+                                </h3>
+                                <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.5rem', lineHeight: '1.6' }}>
+                                    서버에 저장된 <strong>현재 학년의 모든 학생 데이터</strong>를 삭제합니다.<br />
+                                    개인정보 유출 방지를 위해 작업을 마친 후 삭제하는 것을 권장합니다.
+                                </p>
+                                <div style={{ display: 'flex', gap: '1rem' }}>
+                                    <button
+                                        onClick={() => setShowWorkCompleteModal(false)}
+                                        className="btn btn-secondary"
+                                        style={{ flex: 1 }}
+                                    >
+                                        닫기 (계속 작업)
+                                    </button>
+                                    <button
+                                        onClick={handleDeleteData}
+                                        style={{
+                                            flex: 1,
+                                            padding: '0.75rem',
+                                            background: '#ef4444',
+                                            color: '#fff',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            fontWeight: 'bold',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '0.5rem'
+                                        }}
+                                    >
+                                        🗑️ 작업 완료 (데이터 삭제)
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* 명렬표 + 사이드바 레이아웃 */}
                 <div style={{ display: 'flex', gap: '2rem' }}>

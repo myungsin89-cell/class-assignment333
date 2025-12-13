@@ -98,7 +98,7 @@ export default function Home() {
             marginBottom: '1.5rem',
             lineHeight: 1.2
           }}>
-            공정하고 편안한<br />반배정 시스템
+            쉽고 편리한<br />반배정 프로그램
           </h1>
           <p className="fade-in" style={{
             fontSize: '1.25rem',
@@ -145,7 +145,7 @@ export default function Home() {
               WebkitTextFillColor: 'transparent',
               backgroundClip: 'text'
             }}>
-              왜 반배정 시스템인가요?
+              어떤 부분이 좋나요?
             </h2>
             <p style={{ color: 'var(--text-secondary)', fontSize: '1.1rem' }}>
               선생님들의 업무를 덜어주고, 여유시간을 보장합니다.
