@@ -69,6 +69,36 @@ export async function initDatabase() {
       ALTER TABLE classes ADD COLUMN IF NOT EXISTS section_names TEXT;
     `;
 
+    // Migration: Add missing student columns
+    await sql`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS is_underachiever BOOLEAN DEFAULT false;
+    `;
+
+    await sql`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS birth_date TEXT;
+    `;
+
+    await sql`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS contact TEXT;
+    `;
+
+    await sql`
+      ALTER TABLE students ADD COLUMN IF NOT EXISTS notes TEXT;
+    `;
+
+    // Migration: Add special reduction columns to classes table
+    await sql`
+      ALTER TABLE classes ADD COLUMN IF NOT EXISTS new_section_count INTEGER;
+    `;
+
+    await sql`
+      ALTER TABLE classes ADD COLUMN IF NOT EXISTS special_reduction_count INTEGER DEFAULT 0;
+    `;
+
+    await sql`
+      ALTER TABLE classes ADD COLUMN IF NOT EXISTS special_reduction_mode TEXT DEFAULT 'flexible';
+    `;
+
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Database initialization failed:', error);
