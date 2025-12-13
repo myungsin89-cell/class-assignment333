@@ -2543,7 +2543,7 @@ function OuterGroupCreationModal({ type = 'outer', allStudents, existingGroupNam
                     <input
                         type="text"
                         className="form-input"
-                        placeholder="예: 친한친구모임, 동네친구모임 등"
+                        placeholder="예: 학교폭력, 학부모 요청"
                         value={groupName}
                         onChange={(e) => setGroupName(e.target.value)}
                         autoFocus
@@ -2587,7 +2587,7 @@ function OuterGroupCreationModal({ type = 'outer', allStudents, existingGroupNam
                             </p>
                         </div>
                     ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.75rem' }}>
                             {filteredStudents.map((student, index) => {
                                 const id = `${student.section_number}-${student.name}`;
                                 const isSelected = selectedIds.has(id);
