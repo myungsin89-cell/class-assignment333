@@ -1045,7 +1045,7 @@ export default function StudentsPage() {
                                     </td>
 
                                     {/* 구분선 이후 관리 항목 */}
-                                    <td style={{ borderLeft: '2px solid var(--border)' }}>
+                                    <td style={{ borderLeft: '2px solid var(--border)', padding: '0.5rem' }}>
                                         <input
                                             type="text"
                                             inputMode="numeric"
@@ -1057,7 +1057,7 @@ export default function StudentsPage() {
                                             }}
                                             placeholder="-"
                                             disabled={isCompleted}
-                                            style={{ margin: 0, textAlign: 'center', background: 'transparent', border: 'none' }}
+                                            style={{ margin: 0, textAlign: 'center', background: 'transparent', border: 'none', width: '100%', minWidth: '50px', padding: '0.25rem' }}
                                         />
                                     </td>
                                     <td style={{ textAlign: 'center' }}>
