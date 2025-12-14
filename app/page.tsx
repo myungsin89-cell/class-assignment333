@@ -98,7 +98,7 @@ export default function Home() {
             marginBottom: '1.5rem',
             lineHeight: 1.2
           }}>
-            쉽고 편리한<br />반배정 프로그램
+            공평하고 효율적인<br />반배정 프로그램
           </h1>
           <p className="fade-in" style={{
             fontSize: '1.25rem',
