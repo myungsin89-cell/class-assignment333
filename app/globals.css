@@ -161,10 +161,12 @@ h1 {
   border-radius: 12px;
   background: var(--bg-secondary);
   padding: 1rem;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
   width: 100%;
+  min-width: 1200px;
   border-collapse: separate;
   border-spacing: 0;
 }
