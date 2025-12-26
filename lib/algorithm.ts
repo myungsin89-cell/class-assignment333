@@ -245,16 +245,42 @@ function calculateCost(allocation: ClassAllocation, classCount: number, sameName
         cost += deviation * 3000;
     }
 
-    // 7. 성별 균형
+    // 7. 성별 균형 (반 내 남녀 비율 + 반 간 성별 분포)
     const classSizes = Object.values(allocation).map(students => students.length);
     const avgSize = classSizes.reduce((a, b) => a + b, 0) / classCount;
+
+    // 각 반 남녀 인원 수집
+    const maleCounts: number[] = [];
+    const femaleCounts: number[] = [];
 
     for (let c = 0; c < classCount; c++) {
         const classStudents = allocation[c] || [];
         const maleCount = classStudents.filter(s => s.gender === 'M').length;
         const femaleCount = classStudents.filter(s => s.gender === 'F').length;
+        maleCounts.push(maleCount);
+        femaleCounts.push(femaleCount);
+
+        // 7-1. 반 내 남녀 비율 (기존 유지)
         const imbalance = Math.abs(maleCount - femaleCount);
         cost += imbalance * 50;
+    }
+
+    // 7-2. 반 간 남학생 수 분포 균형 (새로 추가)
+    // 반 간에 남학생 수 차이가 2명 초과시 패널티 부여
+    const maxMales = Math.max(...maleCounts);
+    const minMales = Math.min(...maleCounts);
+    const maleGap = maxMales - minMales;
+    if (maleGap > 2) {
+        cost += (maleGap - 2) * 1500;  // 2명 초과 차이시 큰 패널티
+    }
+
+    // 7-3. 반 간 여학생 수 분포 균형 (새로 추가)
+    // 반 간에 여학생 수 차이가 2명 초과시 패널티 부여
+    const maxFemales = Math.max(...femaleCounts);
+    const minFemales = Math.min(...femaleCounts);
+    const femaleGap = maxFemales - minFemales;
+    if (femaleGap > 2) {
+        cost += (femaleGap - 2) * 1500;  // 2명 초과 차이시 큰 패널티
     }
 
     // 8. 정원 균형 (전출예정 제외)
@@ -455,9 +481,46 @@ function getNeighbor(allocation: ClassAllocation, classCount: number): ClassAllo
         return newAllocation;
     }
 
-    // 교환 가능한 학생 중에서 랜덤 선택
-    const student1 = swappable1[Math.floor(Math.random() * swappable1.length)];
-    const student2 = swappable2[Math.floor(Math.random() * swappable2.length)];
+    // 80% 확률로 같은 성별끼리 교환 (성별 균형 최적화 향상)
+    let student1: Student;
+    let student2: Student;
+
+    if (Math.random() < 0.8) {
+        // 같은 성별끼리 교환 시도
+        const males1 = swappable1.filter(s => s.gender === 'M');
+        const females1 = swappable1.filter(s => s.gender === 'F');
+        const males2 = swappable2.filter(s => s.gender === 'M');
+        const females2 = swappable2.filter(s => s.gender === 'F');
+
+        // 남학생끼리 또는 여학생끼리 교환 가능한지 확인
+        const canSwapMales = males1.length > 0 && males2.length > 0;
+        const canSwapFemales = females1.length > 0 && females2.length > 0;
+
+        if (canSwapMales && canSwapFemales) {
+            // 둘 다 가능하면 랜덤 선택
+            if (Math.random() < 0.5) {
+                student1 = males1[Math.floor(Math.random() * males1.length)];
+                student2 = males2[Math.floor(Math.random() * males2.length)];
+            } else {
+                student1 = females1[Math.floor(Math.random() * females1.length)];
+                student2 = females2[Math.floor(Math.random() * females2.length)];
+            }
+        } else if (canSwapMales) {
+            student1 = males1[Math.floor(Math.random() * males1.length)];
+            student2 = males2[Math.floor(Math.random() * males2.length)];
+        } else if (canSwapFemales) {
+            student1 = females1[Math.floor(Math.random() * females1.length)];
+            student2 = females2[Math.floor(Math.random() * females2.length)];
+        } else {
+            // 같은 성별 교환 불가 → 무작위 교환
+            student1 = swappable1[Math.floor(Math.random() * swappable1.length)];
+            student2 = swappable2[Math.floor(Math.random() * swappable2.length)];
+        }
+    } else {
+        // 20% 확률로 무작위 교환 (다양성 유지)
+        student1 = swappable1[Math.floor(Math.random() * swappable1.length)];
+        student2 = swappable2[Math.floor(Math.random() * swappable2.length)];
+    }
 
     // 원래 배열에서의 인덱스 찾기
     const idx1 = newAllocation[class1].findIndex(s => s.id === student1.id);

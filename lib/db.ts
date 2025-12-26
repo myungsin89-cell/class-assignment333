@@ -4,11 +4,11 @@ import { neon } from '@neondatabase/serverless';
 // This allows each user to have their own database when deployed via OAuth2
 const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL environment variable is not set. Please add it to your .env.local file.');
-}
-
-const sql = neon(DATABASE_URL);
+// 빌드 시에는 환경 변수가 없을 수 있으므로 더미 URL 사용
+// 실제 런타임에서 DATABASE_URL이 없으면 쿼리 실행 시 에러 발생
+const sql = DATABASE_URL
+  ? neon(DATABASE_URL)
+  : neon('postgresql://dummy:dummy@localhost:5432/dummy'); // 빌드용 더미
 
 // Initialize database schema
 export async function initDatabase() {
@@ -105,8 +105,10 @@ export async function initDatabase() {
   }
 }
 
-// Auto-initialize on import
+// Auto-initialize on import (only if DATABASE_URL is set)
 // Tables will be created if they don't exist (CREATE TABLE IF NOT EXISTS)
-initDatabase().catch(console.error);
+if (DATABASE_URL) {
+  initDatabase().catch(console.error);
+}
 
 export default sql;

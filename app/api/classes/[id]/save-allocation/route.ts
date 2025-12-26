@@ -6,7 +6,7 @@ export async function POST(
     { params }: { params: Promise<{ id: string }> }
 ) {
     try {
-        const { id } = await params; // classId - Next.js 15에서는 await 필요
+        const { id: classId } = await params; // classId - Next.js 15에서는 await 필요
         const { allocations } = await request.json(); // { studentId, nextSection }[]
 
         if (!allocations || !Array.isArray(allocations)) {
@@ -14,11 +14,12 @@ export async function POST(
         }
 
         // Neon DB는 sql.begin을 지원하지 않으므로 개별 UPDATE로 처리
+        // class_id 조건 추가하여 해당 클래스의 학생만 업데이트 (보안 강화)
         for (const alloc of allocations) {
             await sql`
                 UPDATE students
                 SET next_section = ${alloc.nextSection}
-                WHERE id = ${alloc.studentId}
+                WHERE id = ${alloc.studentId} AND class_id = ${classId}
             `;
         }
 
