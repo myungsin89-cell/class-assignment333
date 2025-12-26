@@ -950,9 +950,14 @@ export default function AllocationPage() {
         const workbook = XLSX.utils.book_new();
 
         allocation.classes.forEach((cls, idx) => {
-            const sortedStudents = [...cls.students].sort((a, b) =>
-                a.name.localeCompare(b.name, 'ko')
-            );
+            const sortedStudents = [...cls.students].sort((a, b) => {
+                // 1순위: 전출예정 학생은 무조건 뒤로
+                if (a.is_transferring_out && !b.is_transferring_out) return 1;
+                if (!a.is_transferring_out && b.is_transferring_out) return -1;
+
+                // 2순위: 일반 학생끼리는 이름 가나다순
+                return a.name.localeCompare(b.name, 'ko');
+            });
 
             // 향후 반 이름 가져오기
             const sectionName = getSectionName(idx);
