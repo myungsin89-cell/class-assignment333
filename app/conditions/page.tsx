@@ -287,7 +287,7 @@ function ConditionsPageContent() {
                 if (allSameSection) {
                     console.log(`✅ Inner 그룹 인식: ${groupName} → ${groupSection}반 "${actualGroupName}"`);
                     loadedInner.push({
-                        id: `inner-${groupSection}-${actualGroupName}`,
+                        id: `inner-${groupSection}-${actualGroupName}-${loadedInner.length}`,
                         name: actualGroupName,  // "그룹1" (반 번호 제외)
                         students: studentList,
                         type: 'inner',
@@ -297,7 +297,7 @@ function ConditionsPageContent() {
                     console.warn(`⚠️ 반 불일치: ${groupName} - 예상=${groupSection}반, 실제=`, new Set(studentList.map(s => s.section_number)));
                     // 학생들이 여러 반에 걸쳐 있으면 outer로 분류
                     loadedOuter.push({
-                        id: `outer-${groupName}`,
+                        id: `outer-${groupName}-${loadedOuter.length}`,
                         name: groupName,
                         students: studentList,
                         type: 'outer'
@@ -307,7 +307,7 @@ function ConditionsPageContent() {
                 // 반 외부 분리 그룹: 반 번호가 없는 일반 그룹명
                 console.log(`📌 Outer 그룹 인식: ${groupName}`);
                 loadedOuter.push({
-                    id: `outer-${groupName}`,
+                    id: `outer-${groupName}-${loadedOuter.length}`,
                     name: groupName,
                     students: studentList,
                     type: 'outer'
@@ -322,7 +322,7 @@ function ConditionsPageContent() {
 
             console.log(`🔗 BIND 그룹 인식: ${groupName}`);
             loadedSameClass.push({
-                id: `sameClass-${groupName}`,
+                id: `sameClass-${groupName}-${loadedSameClass.length}`,
                 name: groupName,
                 students: studentList,
                 type: 'sameClass'
@@ -1664,16 +1664,17 @@ function ConditionsPageContent() {
                             }
                             onClose={() => setGroupModal({ show: false, type: 'outer' })}
                             onCreate={(groupName: string, selectedStudents: Student[]) => {
+                                const uniqueId = Date.now();
                                 if (groupModal.type === 'outer') {
                                     setOuterGroups([...outerGroups, {
-                                        id: `outer-${groupName}`,
+                                        id: `outer-${groupName}-${uniqueId}`,
                                         name: groupName,
                                         students: selectedStudents,
                                         type: 'outer'
                                     }]);
                                 } else {
                                     setSameClassGroups([...sameClassGroups, {
-                                        id: `sameClass-${groupName}`,
+                                        id: `sameClass-${groupName}-${uniqueId}`,
                                         name: groupName,
                                         students: selectedStudents,
                                         type: 'outer' // type은 outer로 통일 (드래그 앤 드롭 호환)

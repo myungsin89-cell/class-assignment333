@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
             db`
                 UPDATE students 
                 SET group_name = ${student.group_name} 
-                WHERE name = ${student.name} AND section_number = ${student.section || student.section_number}
+                WHERE name = ${student.name} AND section_number = ${student.section_number}
             `
         );
 
