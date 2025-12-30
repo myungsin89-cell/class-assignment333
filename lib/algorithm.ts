@@ -678,12 +678,29 @@ export function allocateStudents(
         console.log(`📚 특수교육대상 반 인원 감소: ${specialReduction}명 (${reductionMode === 'force' ? '강제' : '유연'} 적용)`);
     }
 
-    // 1. 동명이인 감지
-    const sameNames = detectSameNames(students);
+    // 0. 전출예정 학생 분리 (배정 알고리즘에서 제외)
+    const transferringStudents = students.filter(s => s.is_transferring_out);
+    const normalStudents = students.filter(s => !s.is_transferring_out);
+
+    console.log(`🚌 전출예정 학생: ${transferringStudents.length}명 (배정에서 제외)`);
+    console.log(`👨‍🎓 일반 학생: ${normalStudents.length}명 (배정 대상)`);
+
+    // 1. 동명이인 감지 (일반 학생만)
+    const sameNames = detectSameNames(normalStudents);
     console.log(`👥 완전 동명이인: ${sameNames.exactDuplicates.length}개`);
 
-    // 2. 시뮬레이티드 어닐링으로 최적 배정 찾기
-    const allocation = simulatedAnnealing(students, classCount, sameNames);
+    // 2. 시뮬레이티드 어닐링으로 최적 배정 찾기 (일반 학생만)
+    const allocation = simulatedAnnealing(normalStudents, classCount, sameNames);
+
+    // 2-1. 전출예정 학생을 각 반에 균등 배정 (인원수 계산에서 제외되도록 마지막에 추가)
+    console.log(`\n🚌 전출예정 학생 배정 (인원수 제외):`);
+    let transferIdx = 0;
+    for (const student of transferringStudents) {
+        // 라운드 로빈으로 각 반에 분배
+        allocation[transferIdx % classCount].push(student);
+        console.log(`   ${student.name} → ${(transferIdx % classCount) + 1}반`);
+        transferIdx++;
+    }
 
     // 3. 특수교육대상 학생 있는 반 확인 및 인원 조정
     const specialClassIndices: number[] = [];
