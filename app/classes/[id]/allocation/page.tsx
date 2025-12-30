@@ -197,6 +197,9 @@ export default function AllocationPage() {
     // 클릭된 분리/결합 학생 정보
     const [clickedBindStudent, setClickedBindStudent] = useState<Student | null>(null);
 
+    // 다운로드 드롭다운 상태
+    const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+
     // 데이터 로드
     useEffect(() => {
         const fetchData = async () => {
@@ -1009,6 +1012,73 @@ export default function AllocationPage() {
         setToast({ message: '엑셀 파일이 다운로드되었습니다!', type: 'success' });
     };
 
+    // 기존반 기준 엑셀 다운로드
+    const handleExportByOriginalClass = () => {
+        if (!allocation || !classData) return;
+
+        const workbook = XLSX.utils.book_new();
+
+        // 1. 모든 학생과 배정된 반 정보를 수집
+        const allStudentsWithAssignment = allocation.classes.flatMap((cls, classIndex) =>
+            cls.students.map(student => ({
+                ...student,
+                // 배정된 반 이름에서 '반' 제거 (가반 → 가)
+                assignedSection: getSectionName(classIndex).replace('반', '')
+            }))
+        );
+
+        // 2. 기존반별로 그룹화 (section_number 기준)
+        const sectionNumbers = [...new Set(allStudentsWithAssignment.map(s => s.section_number || 1))].sort((a, b) => a - b);
+
+        // 3. 각 기존반에 대해 시트 생성
+        sectionNumbers.forEach(sectionNum => {
+            const studentsInSection = allStudentsWithAssignment
+                .filter(s => (s.section_number || 1) === sectionNum)
+                .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+
+            const excelData = studentsInSection.map((student, idx) => {
+                // 특이사항 생성
+                const specialItems: string[] = [];
+                if (student.is_special_class) specialItems.push('특수교육대상');
+                if (student.is_problem_student) specialItems.push('문제행동');
+                if (student.is_underachiever) specialItems.push('학습부진');
+                if (student.is_transferring_out) specialItems.push('전출예정');
+
+                return {
+                    '번호': idx + 1,
+                    '이름': student.name,
+                    '성별': student.gender === 'M' ? '남' : '여',
+                    '생년월일': student.birth_date || '',
+                    '배정학급': student.assignedSection,
+                    '특이사항': specialItems.join(', '),
+                    '비고': student.notes || ''
+                };
+            });
+
+            // 워크시트 생성
+            const worksheet = XLSX.utils.json_to_sheet(excelData);
+            worksheet['!cols'] = [
+                { wch: 5 },   // 번호
+                { wch: 10 },  // 이름
+                { wch: 5 },   // 성별
+                { wch: 12 },  // 생년월일
+                { wch: 10 },  // 배정학급
+                { wch: 20 },  // 특이사항
+                { wch: 20 }   // 비고
+            ];
+
+            // 워크북에 시트 추가
+            XLSX.utils.book_append_sheet(workbook, worksheet, `${sectionNum}반`);
+        });
+
+        // 파일 다운로드
+        const fileName = `기존반_배정결과_${classData.grade}학년_${new Date().toLocaleDateString('ko-KR').replace(/\./g, '').replace(/ /g, '')}.xlsx`;
+        XLSX.writeFile(workbook, fileName);
+
+        setToast({ message: '기존반 기준 엑셀 파일이 다운로드되었습니다!', type: 'success' });
+        setShowDownloadDropdown(false);
+    };
+
     // 다시 편성
     const handleReAllocate = () => {
         if (!classData || !allStudents.length) return;
@@ -1814,29 +1884,96 @@ export default function AllocationPage() {
                         >
                             {isSaving ? '💾 저장 중...' : '💾 확정 및 저장'}
                         </button>
-                        <button
-                            onClick={handleExportExcel}
-                            disabled={!isSavedAllocation}
-                            style={{
-                                padding: '0.75rem 1.25rem',
-                                background: isSavedAllocation
-                                    ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
-                                    : 'rgba(100, 116, 139, 0.3)',
-                                border: 'none',
-                                borderRadius: '8px',
-                                color: isSavedAllocation ? '#fff' : 'rgba(255,255,255,0.5)',
-                                fontSize: '0.9rem',
-                                fontWeight: '600',
-                                cursor: isSavedAllocation ? 'pointer' : 'not-allowed',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                transition: 'all 0.2s',
-                                opacity: isSavedAllocation ? 1 : 0.6
-                            }}
-                        >
-                            📥 엑셀 다운로드
-                        </button>
+                        {/* 다운로드 드롭다운 */}
+                        <div style={{ position: 'relative' }}>
+                            <button
+                                onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
+                                disabled={!isSavedAllocation}
+                                style={{
+                                    padding: '0.75rem 1.25rem',
+                                    background: isSavedAllocation
+                                        ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                                        : 'rgba(100, 116, 139, 0.3)',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    color: isSavedAllocation ? '#fff' : 'rgba(255,255,255,0.5)',
+                                    fontSize: '0.9rem',
+                                    fontWeight: '600',
+                                    cursor: isSavedAllocation ? 'pointer' : 'not-allowed',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    transition: 'all 0.2s',
+                                    opacity: isSavedAllocation ? 1 : 0.6
+                                }}
+                            >
+                                📥 다운로드 {showDownloadDropdown ? '▲' : '▼'}
+                            </button>
+
+                            {/* 드롭다운 메뉴 */}
+                            {showDownloadDropdown && (
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '100%',
+                                    right: 0,
+                                    marginTop: '0.5rem',
+                                    background: 'rgba(30, 41, 59, 0.95)',
+                                    border: '1px solid rgba(255,255,255,0.2)',
+                                    borderRadius: '8px',
+                                    overflow: 'hidden',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                                    zIndex: 100,
+                                    minWidth: '180px'
+                                }}>
+                                    <button
+                                        onClick={() => {
+                                            handleExportExcel();
+                                            setShowDownloadDropdown(false);
+                                        }}
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.75rem 1rem',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            color: '#fff',
+                                            fontSize: '0.9rem',
+                                            textAlign: 'left',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            transition: 'background 0.2s'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                    >
+                                        📋 새반 기준
+                                    </button>
+                                    <button
+                                        onClick={handleExportByOriginalClass}
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.75rem 1rem',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            borderTop: '1px solid rgba(255,255,255,0.1)',
+                                            color: '#fff',
+                                            fontSize: '0.9rem',
+                                            textAlign: 'left',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            transition: 'background 0.2s'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                    >
+                                        📂 기존반 기준
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                         <button
                             onClick={handleDeleteData}
                             disabled={!isSavedAllocation}
