@@ -388,58 +388,108 @@ function createInitialAllocation(students: Student[], classCount: number): Class
         console.log(`   BIND 블록 ${idx + 1} (${block.length}명) → ${minIdx + 1}반`);
     });
 
-    // 3. 나머지 학생을 기존반 기준으로 균등 배정
-    // 기존반별로 학생 그룹화
-    const sectionMap = new Map<number, Student[]>();
+    // 3. 나머지 학생을 기존반 기준으로 균등 배정 (인터리빙 방식)
+    // 각 새 반에 기존반별 학생이 균등하게 배정되도록 함
+
+    // 기존반별로 학생 그룹화 (남/여 분리)
+    const sectionMalesMap = new Map<number, Student[]>();
+    const sectionFemalesMap = new Map<number, Student[]>();
+
     students.forEach(s => {
         if (assignedBindStudentIds.has(s.id)) return; // BIND 학생은 이미 배정됨
 
         const section = s.section_number || 0;
-        if (!sectionMap.has(section)) {
-            sectionMap.set(section, []);
+
+        if (s.gender === 'M') {
+            if (!sectionMalesMap.has(section)) {
+                sectionMalesMap.set(section, []);
+            }
+            sectionMalesMap.get(section)!.push(s);
+        } else {
+            if (!sectionFemalesMap.has(section)) {
+                sectionFemalesMap.set(section, []);
+            }
+            sectionFemalesMap.get(section)!.push(s);
         }
-        sectionMap.get(section)!.push(s);
     });
 
-    console.log(`📋 기존반 수: ${sectionMap.size}개`);
+    // 각 기존반 학생들을 성적순 정렬
+    sectionMalesMap.forEach((males, section) => {
+        males.sort((a, b) => (a.rank || 999) - (b.rank || 999));
+    });
+    sectionFemalesMap.forEach((females, section) => {
+        females.sort((a, b) => (a.rank || 999) - (b.rank || 999));
+    });
 
-    // 각 기존반에서 학생들을 새 반에 균등 배정 (라운드 로빈 방식)
-    let sectionIndex = 0;
-    sectionMap.forEach((sectionStudents, sectionNum) => {
-        // 성별로 분리하고 성적순 정렬
-        const males = sectionStudents.filter(s => s.gender === 'M')
-            .sort((a, b) => (a.rank || 999) - (b.rank || 999));
-        const females = sectionStudents.filter(s => s.gender === 'F')
-            .sort((a, b) => (a.rank || 999) - (b.rank || 999));
+    const sectionNumbers = [...new Set([...sectionMalesMap.keys(), ...sectionFemalesMap.keys()])].sort((a, b) => a - b);
+    console.log(`📋 기존반 수: ${sectionNumbers.length}개`);
 
-        // 각 기존반마다 다른 시작 위치로 라운드 로빈 배정 (공정성 향상)
-        const startOffset = sectionIndex % classCount;
+    // 인터리빙 배정: 새 반 0→1→2→...→0→1→... 순환하며
+    // 각 기존반에서 남학생 1명씩, 여학생 1명씩 배정
+    // 모든 기존반에서 1명씩 배정 = 1라운드
 
-        // 남학생을 새 반에 라운드 로빈 방식으로 배정
-        males.forEach((s, idx) => {
-            const targetIdx = (startOffset + idx) % classCount;
-            allocation[targetIdx].push(s);
-        });
+    let currentNewClass = 0;
 
-        // 여학생도 라운드 로빈 방식으로 배정 (남학생과 다른 시작점)
-        const femaleStartOffset = (startOffset + 1) % classCount;
-        females.forEach((s, idx) => {
-            const targetIdx = (femaleStartOffset + idx) % classCount;
-            allocation[targetIdx].push(s);
-        });
+    // 남학생 인터리빙 배정
+    let hasMoreMales = true;
+    while (hasMoreMales) {
+        hasMoreMales = false;
+        for (const section of sectionNumbers) {
+            const males = sectionMalesMap.get(section) || [];
+            if (males.length > 0) {
+                const student = males.shift()!;
+                allocation[currentNewClass].push(student);
+                currentNewClass = (currentNewClass + 1) % classCount;
+                hasMoreMales = hasMoreMales || males.length > 0;
+            }
+        }
+        // 다음 라운드에서도 체크
+        for (const section of sectionNumbers) {
+            if ((sectionMalesMap.get(section) || []).length > 0) {
+                hasMoreMales = true;
+                break;
+            }
+        }
+    }
 
-        sectionIndex++;
+    // 여학생 인터리빙 배정 (남학생과 다른 시작점으로 균형 맞춤)
+    currentNewClass = 1 % classCount;
 
-        // 기존반별 배정 통계 출력
-        const distribution = [];
+    let hasMoreFemales = true;
+    while (hasMoreFemales) {
+        hasMoreFemales = false;
+        for (const section of sectionNumbers) {
+            const females = sectionFemalesMap.get(section) || [];
+            if (females.length > 0) {
+                const student = females.shift()!;
+                allocation[currentNewClass].push(student);
+                currentNewClass = (currentNewClass + 1) % classCount;
+                hasMoreFemales = hasMoreFemales || females.length > 0;
+            }
+        }
+        // 다음 라운드에서도 체크
+        for (const section of sectionNumbers) {
+            if ((sectionFemalesMap.get(section) || []).length > 0) {
+                hasMoreFemales = true;
+                break;
+            }
+        }
+    }
+
+    // 기존반별 배정 통계 출력
+    for (const sectionNum of sectionNumbers) {
+        const distribution: string[] = [];
         for (let c = 0; c < classCount; c++) {
-            const countFromSection = allocation[c].filter(s =>
-                s.section_number === sectionNum && !assignedBindStudentIds.has(s.id)
+            const maleCount = allocation[c].filter(s =>
+                s.section_number === sectionNum && s.gender === 'M' && !assignedBindStudentIds.has(s.id)
             ).length;
-            distribution.push(countFromSection);
+            const femaleCount = allocation[c].filter(s =>
+                s.section_number === sectionNum && s.gender === 'F' && !assignedBindStudentIds.has(s.id)
+            ).length;
+            distribution.push(`남${maleCount}여${femaleCount}`);
         }
-        console.log(`   기존 ${sectionNum}반 (${sectionStudents.length}명) → 새 반 배정: [${distribution.join(', ')}]`);
-    });
+        console.log(`   기존 ${sectionNum}반 → 새 반별 배정: [${distribution.join(', ')}]`);
+    }
 
     return allocation;
 }
