@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { Student } from './StudentsPageInner';
 import {
     DndContext,
     DragEndEvent,
@@ -14,21 +15,6 @@ import {
     useDroppable,
 } from '@dnd-kit/core';
 
-interface Student {
-    id?: number;
-    name: string;
-    gender: 'M' | 'F';
-    birth_date?: string;
-    contact?: string;
-    notes?: string;
-    is_problem_student: boolean;
-    is_special_class: boolean;
-    is_underachiever: boolean;
-    is_transferring_out: boolean;
-    group_name: string;
-    rank: number | null;
-    previous_section?: number | null;
-}
 
 interface RankModalProps {
     students: Student[];

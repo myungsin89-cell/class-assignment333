@@ -1,17 +1,31 @@
-import { neon } from '@neondatabase/serverless';
+import postgres from 'postgres';
+
+// Singleton pattern to prevent excessive connections in development
+const globalForSql = global as unknown as {
+  sql: ReturnType<typeof postgres> | undefined;
+  isDbInitialized: boolean | undefined;
+};
 
 // Get database URL from environment variable
-// This allows each user to have their own database when deployed via OAuth2
 const DATABASE_URL = process.env.DATABASE_URL;
 
-// 빌드 시에는 환경 변수가 없을 수 있으므로 더미 URL 사용
-// 실제 런타임에서 DATABASE_URL이 없으면 쿼리 실행 시 에러 발생
-const sql = DATABASE_URL
-  ? neon(DATABASE_URL)
-  : neon('postgresql://dummy:dummy@localhost:5432/dummy'); // 빌드용 더미
+const sql = globalForSql.sql || (DATABASE_URL
+  ? postgres(DATABASE_URL, {
+    max: 5,  // 최대 연결 수를 줄여 연결 고갈 방지
+    idle_timeout: 10,  // 유휴 연결 타임아웃 (초) - 더 빠르게 해제
+    connect_timeout: 10,  // 연결 타임아웃 (초)
+    prepare: false,  // prepared statement 비활성화로 연결 문제 방지
+  })
+  : postgres('postgresql://dummy:dummy@localhost:5432/dummy'));
+
+if (process.env.NODE_ENV !== 'production') {
+  globalForSql.sql = sql;
+}
 
 // Initialize database schema
 export async function initDatabase() {
+  if (globalForSql.isDbInitialized) return;
+
   try {
     // Create tables
     await sql`
@@ -42,6 +56,7 @@ export async function initDatabase() {
         id SERIAL PRIMARY KEY,
         class_id INTEGER NOT NULL,
         section_number INTEGER NOT NULL DEFAULT 1,
+        student_number INTEGER,
         name TEXT NOT NULL,
         gender TEXT CHECK(gender IN ('M', 'F')) NOT NULL,
         is_problem_student BOOLEAN DEFAULT false,
@@ -59,46 +74,21 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_students_class_section ON students(class_id, section_number);
     `;
 
-    // Migration: Add next_section column if it doesn't exist
-    await sql`
-      ALTER TABLE students ADD COLUMN IF NOT EXISTS next_section INTEGER;
-    `;
+    // Migration: Add columns
+    await sql`ALTER TABLE students ADD COLUMN IF NOT EXISTS next_section INTEGER;`;
+    await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS section_names TEXT;`;
+    await sql`ALTER TABLE students ADD COLUMN IF NOT EXISTS is_underachiever BOOLEAN DEFAULT false;`;
+    await sql`ALTER TABLE students ADD COLUMN IF NOT EXISTS birth_date TEXT;`;
+    await sql`ALTER TABLE students ADD COLUMN IF NOT EXISTS contact TEXT;`;
+    await sql`ALTER TABLE students ADD COLUMN IF NOT EXISTS notes TEXT;`;
+    await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS new_section_count INTEGER;`;
+    await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS new_section_names TEXT;`;
+    await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS conditions_completed BOOLEAN DEFAULT FALSE;`;
+    await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS special_reduction_count INTEGER DEFAULT 0;`;
+    await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS special_reduction_mode TEXT DEFAULT 'flexible';`;
+    await sql`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_number INTEGER;`;
 
-    // Migration: Add section_names column to classes table
-    await sql`
-      ALTER TABLE classes ADD COLUMN IF NOT EXISTS section_names TEXT;
-    `;
-
-    // Migration: Add missing student columns
-    await sql`
-      ALTER TABLE students ADD COLUMN IF NOT EXISTS is_underachiever BOOLEAN DEFAULT false;
-    `;
-
-    await sql`
-      ALTER TABLE students ADD COLUMN IF NOT EXISTS birth_date TEXT;
-    `;
-
-    await sql`
-      ALTER TABLE students ADD COLUMN IF NOT EXISTS contact TEXT;
-    `;
-
-    await sql`
-      ALTER TABLE students ADD COLUMN IF NOT EXISTS notes TEXT;
-    `;
-
-    // Migration: Add special reduction columns to classes table
-    await sql`
-      ALTER TABLE classes ADD COLUMN IF NOT EXISTS new_section_count INTEGER;
-    `;
-
-    await sql`
-      ALTER TABLE classes ADD COLUMN IF NOT EXISTS special_reduction_count INTEGER DEFAULT 0;
-    `;
-
-    await sql`
-      ALTER TABLE classes ADD COLUMN IF NOT EXISTS special_reduction_mode TEXT DEFAULT 'flexible';
-    `;
-
+    globalForSql.isDbInitialized = true;
     console.log('Database initialized successfully');
   } catch (error) {
     console.error('Database initialization failed:', error);
@@ -106,8 +96,7 @@ export async function initDatabase() {
 }
 
 // Auto-initialize on import (only if DATABASE_URL is set)
-// Tables will be created if they don't exist (CREATE TABLE IF NOT EXISTS)
-if (DATABASE_URL) {
+if (DATABASE_URL && !globalForSql.isDbInitialized) {
   initDatabase().catch(console.error);
 }
 

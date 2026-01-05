@@ -44,91 +44,50 @@ export async function PUT(
             conditions_completed  // 조건 설정 마감 상태
         } = body;
 
-        // conditions_completed만 업데이트하는 경우 (마감/해제)
-        if (conditions_completed !== undefined && new_section_count === undefined) {
-            // conditions_completed 컬럼 확인/추가
+        // 1. 마감 상태 업데이트 (마감/해제 전용 또는 공통)
+        if (conditions_completed !== undefined) {
+            console.log(`[PUT /classes/${id}] Updating conditions_completed to ${conditions_completed}`);
             try {
-                await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS conditions_completed BOOLEAN DEFAULT FALSE`;
-            } catch (_e) {
-                console.log('conditions_completed column already exists or cannot be added');
-            }
-
-            await sql`
-                UPDATE classes
-                SET conditions_completed = ${conditions_completed}
-                WHERE id = ${id}
-            `;
-
-            return NextResponse.json({
-                success: true,
-                conditions_completed
-            });
-        }
-
-        // 기존 로직: 반 구성 저장
-        if (!new_section_count || !section_names) {
-            return NextResponse.json({ error: 'new_section_count and section_names are required' }, { status: 400 });
-        }
-
-        // 반 이름 유효성 검사
-        if (!Array.isArray(section_names) || section_names.length !== new_section_count) {
-            return NextResponse.json({ error: 'section_names must be an array with length equal to new_section_count' }, { status: 400 });
-        }
-
-        // new_section_count 컬럼 추가 시도 (없으면 추가)
-        try {
-            await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS new_section_count INTEGER`;
-            await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS new_section_names TEXT`;
-        } catch (e) {
-            console.log('Column already exists or cannot be added:', e);
-        }
-
-        // new_section_count, new_section_names 업데이트 (section_count는 변경하지 않음!)
-        await sql`
-            UPDATE classes
-            SET new_section_count = ${new_section_count},
-                new_section_names = ${JSON.stringify(section_names)}
-            WHERE id = ${id}
-        `;
-
-        // 특수교육 설정 컬럼이 있는지 확인하고 업데이트 시도
-        try {
-            await sql`
-                UPDATE classes
-                SET special_reduction_count = ${special_reduction_count || 0},
-                    special_reduction_mode = ${special_reduction_mode || 'flexible'}
-                WHERE id = ${id}
-            `;
-        } catch (_columnError) {
-            // 컬럼이 없으면 추가 시도
-            console.log('Special reduction columns not found, attempting to add...');
-            try {
-                await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS special_reduction_count INTEGER DEFAULT 0`;
-                await sql`ALTER TABLE classes ADD COLUMN IF NOT EXISTS special_reduction_mode TEXT DEFAULT 'flexible'`;
-
-                // 다시 업데이트 시도
                 await sql`
                     UPDATE classes
-                    SET special_reduction_count = ${special_reduction_count || 0},
-                        special_reduction_mode = ${special_reduction_mode || 'flexible'}
-                WHERE id = ${id}
+                    SET conditions_completed = ${conditions_completed}
+                    WHERE id = ${id}
                 `;
-            } catch (alterError) {
-                console.error('Failed to add special reduction columns:', alterError);
-                // 컬럼 추가 실패해도 기본 저장은 성공했으므로 계속 진행
+            } catch (err) {
+                console.error(`[PUT /classes/${id}] Failed to update conditions_completed:`, err);
+                throw new Error(`Failed to update conditions_completed: ${(err as Error).message}`);
             }
         }
 
-        return NextResponse.json({
-            success: true,
-            new_section_count,
-            section_names,
-            special_reduction_count: special_reduction_count || 0,
-            special_reduction_mode: special_reduction_mode || 'flexible'
-        });
+        // 2. 반 구성 정보 업데이트 (데이터가 있는 경우에만)
+        if (new_section_count !== undefined && section_names !== undefined) {
+            console.log(`[PUT /classes/${id}] Updating class config: count=${new_section_count}`);
+            // 반 이름 유효성 검사
+            if (!Array.isArray(section_names) || section_names.length !== new_section_count) {
+                return NextResponse.json({ error: 'section_names must be an array with length equal to new_section_count' }, { status: 400 });
+            }
+
+            try {
+                await sql`
+                    UPDATE classes
+                    SET new_section_count = ${new_section_count},
+                        new_section_names = ${JSON.stringify(section_names)},
+                        special_reduction_count = ${special_reduction_count || 0},
+                        special_reduction_mode = ${special_reduction_mode || 'flexible'}
+                    WHERE id = ${id}
+                `;
+            } catch (err) {
+                console.error(`[PUT /classes/${id}] Failed to update class config:`, err);
+                throw new Error(`Failed to update class config: ${(err as Error).message}`);
+            }
+        }
+
+        return NextResponse.json({ success: true });
     } catch (error) {
         console.error('Error updating class configuration:', error);
-        return NextResponse.json({ error: 'Failed to update class configuration' }, { status: 500 });
+        // 에러 메시지를 상세하게 반환 (보안상 민감한 정보는 제외되지만 SQL 에러 힌트 포함)
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }
 

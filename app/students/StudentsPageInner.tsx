@@ -7,8 +7,9 @@ import SeparationModal from './SeparationModal';
 import * as XLSX from 'xlsx';
 import { customConfirm } from '@/components/GlobalAlert';
 
-interface Student {
+export interface Student {
     id?: number;
+    student_number: number | null;
     name: string;
     gender: 'M' | 'F';
     birth_date?: string;
@@ -193,6 +194,7 @@ export default function StudentsPage() {
                     is_transferring_out: Boolean(s.is_transferring_out),
                     group_name: s.group_name || '',
                     rank: s.rank || null,
+                    section_number: s.section_number,
                     previous_section: s.previous_section || null,
                 })));
             } else {
@@ -241,6 +243,7 @@ export default function StudentsPage() {
     }, [classId, currentSection]);
 
     const createEmptyStudent = (): Student => ({
+        student_number: null,
         name: '',
         gender: 'M',
         birth_date: '',
@@ -263,47 +266,119 @@ export default function StudentsPage() {
         const pastedData = e.clipboardData.getData('text');
         const rows = pastedData.split('\n').filter(row => row.trim());
 
-        const newStudents: Student[] = rows.map(row => {
+        const newStudentsData = rows.map(row => {
             const cols = row.split('\t');
 
-            // 1. 번호 (무시)
-            // 2. 성명
-            const name = cols[1]?.trim() || '';
+            // 스마트 컬럼 감지: 첫 번째 컬럼이 숫자인지 확인 (출석번호로 사용)
+            const firstCol = cols[0]?.trim() || '';
+            const isFirstColNumber = /^\d+$/.test(firstCol);
 
-            // 3. 성별
-            const genderValue = cols[2]?.trim().toUpperCase();
-            let gender: 'M' | 'F' = 'M';
-            if (genderValue === 'F' || cols[2]?.trim() === '여' || cols[2]?.trim() === '여자') {
-                gender = 'F';
+            let student_number: number | null = null;
+            let startCol = 0;
+
+            if (isFirstColNumber) {
+                student_number = parseInt(firstCol, 10);
+                startCol = 1; // 번호를 썼으니 다음 칸부터 데이터
             }
 
-            // 4. 생년월일
-            const birth_date = cols[3]?.trim() || '';
+            // 데이터 객체 생성 (값이 있는 경우만 포함하여 기존 데이터를 보호)
+            const data: any = { student_number };
 
-            // 5. 특이사항
-            const notes = cols[4]?.trim() || '';
+            const name = cols[startCol]?.trim();
+            if (name) data.name = name;
 
-            // 6. 연락처
-            const contact = cols[5]?.trim() || '';
+            const genderRaw = cols[startCol + 1]?.trim().toUpperCase();
+            if (genderRaw) {
+                const isFemale = genderRaw === 'F' || genderRaw === '여' || genderRaw === '여자' || genderRaw === '여성' || genderRaw === 'FEMALE';
+                data.gender = isFemale ? 'F' : 'M';
+            }
 
-            return {
-                name,
-                gender,
-                birth_date,
-                notes,
-                contact,
-                is_problem_student: false,
-                is_special_class: false,
-                is_underachiever: false,
-                is_transferring_out: false,
-                group_name: '',
-                rank: null,
-            };
+            const birthRaw = cols[startCol + 2]?.trim();
+            if (birthRaw) {
+                // 숫자만 추출
+                let cleanBirth = birthRaw.replace(/\D/g, '');
+                if (cleanBirth.length === 6) {
+                    // 6자리(YYMMDD)를 8자리(YYYYMMDD)로 변환
+                    const yearPrefix = parseInt(cleanBirth.substring(0, 2), 10) > 30 ? '19' : '20';
+                    cleanBirth = yearPrefix + cleanBirth;
+                }
+                data.birth_date = cleanBirth;
+            }
+
+            const notes = cols[startCol + 3]?.trim();
+            if (notes) data.notes = notes;
+
+            const contact = cols[startCol + 4]?.trim();
+            if (contact) data.contact = contact;
+
+            return data;
         });
 
-        setStudents(newStudents);
+        // 스마트 병합: 현재 비어있는 행을 찾아서 채우거나, 동일 번호/이름이 있으면 업데이트
+        setStudents(prevStudents => {
+            const updated = [...prevStudents];
+            const remainingNewStudents: any[] = [];
 
-        setTimeout(() => setIsPasting(false), 1000);
+            newStudentsData.forEach(newS => {
+                let merged = false;
+                let existingIdx = -1;
+
+                // 1. 번호가 있다면 동일한 번호를 가진 행을 찾아 매칭
+                if (newS.student_number !== null) {
+                    existingIdx = updated.findIndex(s => s.student_number === newS.student_number);
+                }
+
+                // 2. 번호 매칭 실패 시 이름으로 매칭 시도 (이름이 제공된 경우)
+                if (existingIdx === -1 && newS.name) {
+                    existingIdx = updated.findIndex(s => s.name === newS.name);
+                }
+
+                if (existingIdx !== -1) {
+                    // 기존 행 업데이트 (제공된 필드만 덮어씌움)
+                    updated[existingIdx] = {
+                        ...updated[existingIdx],
+                        ...newS,
+                    };
+                    merged = true;
+                }
+
+                if (!merged) {
+                    remainingNewStudents.push(newS);
+                }
+            });
+
+            // 2. 매칭되지 않은 데이터들은 기존 빈 행(이름 없는 행)을 찾아서 채움
+            let pasteIdx = 0;
+            for (let i = 0; i < updated.length && pasteIdx < remainingNewStudents.length; i++) {
+                if (!updated[i].name) {
+                    updated[i] = {
+                        ...createEmptyStudent(),
+                        ...remainingNewStudents[pasteIdx++]
+                    };
+                }
+            }
+
+            // 3. 그래도 남은 데이터는 뒤에 추가
+            while (pasteIdx < remainingNewStudents.length) {
+                updated.push({
+                    ...createEmptyStudent(),
+                    ...remainingNewStudents[pasteIdx++]
+                });
+            }
+
+            // 출석번호 순으로 정렬 (번호가 있는 경우)
+            return updated.sort((a, b) => {
+                const numA = a.student_number;
+                const numB = b.student_number;
+
+                if (numA !== null && numB !== null) return numA - numB;
+                if (numA !== null) return -1;
+                if (numB !== null) return 1;
+                return 0;
+            });
+        });
+
+        setTimeout(() => setIsPasting(false), 2000);
     };
 
     const downloadTemplate = () => {
@@ -373,18 +448,13 @@ export default function StudentsPage() {
                 const newStudents: Student[] = dataRows
                     .filter(row => row && row.length > 0 && row[1]) // 이름이 있는 행만
                     .map(row => {
-                        // 0: 번호 (무시)
-                        // 1: 이름
-                        // 2: 성별
-                        // 3: 생년월일
-                        // 4: 특이사항
-                        // 5: 보호자 연락처
+                        const student_number_val = parseInt(String(row[0] || '').trim(), 10);
+                        const student_number = isNaN(student_number_val) ? null : student_number_val;
 
                         const name = String(row[1] || '').trim();
                         const genderValue = String(row[2] || '').trim().toLowerCase();
                         let gender: 'M' | 'F' = 'M';
 
-                        // 여성 인식: 여, 여자, 여성, f, female
                         if (genderValue === '여' ||
                             genderValue === '여자' ||
                             genderValue === '여성' ||
@@ -392,25 +462,19 @@ export default function StudentsPage() {
                             genderValue === 'female') {
                             gender = 'F';
                         }
-                        // 남성은 기본값이지만 명시적으로 확인 가능
-                        // 남, 남자, 남성, m, male
 
                         const birth_date = String(row[3] || '').trim();
                         const notes = String(row[4] || '').trim();
                         const contact = String(row[5] || '').trim();
 
                         return {
+                            ...createEmptyStudent(),
+                            student_number,
                             name,
                             gender,
                             birth_date,
                             notes,
                             contact,
-                            is_problem_student: false,
-                            is_special_class: false,
-                            is_underachiever: false,
-                            is_transferring_out: false,
-                            group_name: '',
-                            rank: null,
                         };
                     });
 
@@ -467,8 +531,13 @@ export default function StudentsPage() {
 
         const updated = [...students];
 
-        // 필드 순서 정의
-        const fieldOrder: (keyof Student)[] = ['name', 'gender', 'is_problem_student', 'is_special_class', 'group_name', 'rank'];
+        // 필드 순서 정의 (UI 테이블 컬럼 순서와 일치)
+        const fieldOrder: (keyof Student)[] = ['student_number'];
+        if (classData?.is_distributed) {
+            fieldOrder.push('previous_section' as keyof Student);
+        }
+        fieldOrder.push('name', 'gender', 'birth_date', 'notes', 'contact', 'rank');
+
         const startFieldIndex = fieldOrder.indexOf(field);
 
         console.log('[붙여넣기] 필드 순서 인덱스:', startFieldIndex);
@@ -496,47 +565,30 @@ export default function StudentsPage() {
                 console.log(`[붙여넣기] 행 ${targetRowIndex}, 열 ${colIndex}: ${targetField} = "${trimmedValue}"`);
 
                 // 필드 타입에 따라 값 변환
-                if (targetField === 'rank') {
-                    // 숫자가 아닌 모든 문자 제거 (공백, 특수문자 등)
-                    const cleanValue = trimmedValue.replace(/\D/g, '');
+                if (targetField === 'student_number' || targetField === 'rank') {
+                    const cleanValue = trimmedValue.replace(/[^\d]/g, '');
                     const numValue = parseInt(cleanValue, 10);
-                    updated[targetRowIndex].rank = !isNaN(numValue) && cleanValue ? numValue : null;
+                    updated[targetRowIndex][targetField] = !isNaN(numValue) ? numValue : null;
                 } else if (targetField === 'gender') {
                     const genderValue = trimmedValue.toUpperCase();
-                    if (genderValue === 'F' || trimmedValue === '여' || trimmedValue === '여자') {
-                        updated[targetRowIndex].gender = 'F';
-                    } else {
-                        updated[targetRowIndex].gender = 'M';
+                    const isFemale = genderValue === 'F' || genderValue === '여' || genderValue === '여자' || genderValue === '여성' || genderValue === 'FEMALE';
+                    updated[targetRowIndex].gender = isFemale ? 'F' : 'M';
+                } else if (targetField === 'birth_date') {
+                    // 숫자만 추출 및 8자리 변환
+                    let cleanBirth = trimmedValue.replace(/\D/g, '');
+                    if (cleanBirth.length === 6) {
+                        const yearPrefix = parseInt(cleanBirth.substring(0, 2), 10) > 30 ? '19' : '20';
+                        cleanBirth = yearPrefix + cleanBirth;
                     }
-                } else if (targetField === 'is_problem_student') {
-                    updated[targetRowIndex].is_problem_student =
-                        trimmedValue.toLowerCase() === 'true' ||
-                        trimmedValue === '1' ||
-                        trimmedValue === '문제';
-                } else if (targetField === 'is_special_class') {
-                    updated[targetRowIndex].is_special_class =
-                        trimmedValue.toLowerCase() === 'true' ||
-                        trimmedValue === '1' ||
-                        trimmedValue === '특수';
-                } else if (targetField === 'name') {
-                    updated[targetRowIndex].name = trimmedValue;
-                } else if (targetField === 'group_name') {
-                    // 그룹 값 정규화: "1" → "그룹1", "그룹 1" → "그룹1"
-                    let groupValue = trimmedValue;
-                    if (/^\d+$/.test(trimmedValue)) {
-                        // 숫자만 있으면 "그룹" 접두사 추가
-                        groupValue = `그룹${trimmedValue}`;
-                    } else if (trimmedValue) {
-                        // "그룹 1" → "그룹1" (공백 제거)
-                        groupValue = trimmedValue.replace(/\s/g, '');
-                    }
-                    // 유효한 옵션인지 확인 (그룹1~그룹10)
-                    const validGroups = ['그룹1', '그룹2', '그룹3', '그룹4', '그룹5', '그룹6', '그룹7', '그룹8', '그룹9', '그룹10'];
-                    updated[targetRowIndex].group_name = validGroups.includes(groupValue) ? groupValue : '';
+                    updated[targetRowIndex].birth_date = cleanBirth;
+                } else if (targetField === 'name' || targetField === 'notes' || targetField === 'contact') {
+                    updated[targetRowIndex][targetField] = trimmedValue;
                 }
             });
         });
 
+        // 이름이 있는 행만 남기거나 정렬하는 등의 추가 로직이 필요할 수 있으나,
+        // 현재는 붙여넣은 그대로를 유지하여 사용자가 확인하게 함
         setStudents(updated);
         setIsPasting(true);
         setTimeout(() => setIsPasting(false), 1000);
@@ -844,12 +896,16 @@ export default function StudentsPage() {
                                     zIndex: 10,
                                     boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
                                 }}>
-                                    <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--text-primary)' }}>
-                                        엑셀 데이터를 복사(Ctrl+C)한 후<br />테이블을 클릭하고 붙여넣기(Ctrl+V) 하세요.
+                                    <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--text-primary)', lineHeight: '1.4' }}>
+                                        엑셀에서 원하는 영역만 복사(Ctrl+C)해서<br />
+                                        여기서 붙여넣기(Ctrl+V) 하세요.<br />
+                                        <strong>* 번호나 이름이 같으면 기존 정보를 업데이트합니다.</strong><br />
+                                        <strong>* 번호와 이름이 모두 없으면 새로 추가합니다.</strong>
                                     </p>
                                     <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                        * 예시자료 형식을 지켜주세요.
+                                        필수 필드: [성명], [성별] (권장: 생년월일, 비고)
                                     </p>
+
                                 </div>
                             )}
                         </div>
@@ -965,7 +1021,33 @@ export default function StudentsPage() {
                         <tbody>
                             {students.map((student, index) => (
                                 <tr key={index} className="student-row" style={{ position: 'relative' }}>
-                                    <td style={{ textAlign: 'center', color: 'var(--text-muted)' }}>{index + 1}</td>
+                                    <td style={{ textAlign: 'center' }}>
+                                        <input
+                                            type="text"
+                                            className="form-input"
+                                            value={student.student_number || ''}
+                                            onChange={(e) => {
+                                                const val = e.target.value.replace(/[^\d]/g, '');
+                                                updateStudent(index, 'student_number', val ? parseInt(val, 10) : null);
+                                            }}
+                                            onPaste={(e) => handleFieldPaste(e, index, 'student_number')}
+                                            disabled={isCompleted}
+                                            placeholder="-"
+                                            title="출석번호"
+                                            style={{
+                                                margin: 0,
+                                                padding: '0.25rem',
+                                                border: 'none',
+                                                background: 'transparent',
+                                                textAlign: 'center',
+                                                width: '100%',
+                                                color: 'var(--text-muted)',
+                                                fontWeight: 'bold'
+                                            }}
+                                            onFocus={(e) => e.target.style.borderBottom = '1px solid var(--primary)'}
+                                            onBlur={(e) => e.target.style.borderBottom = '1px solid transparent'}
+                                        />
+                                    </td>
                                     {!!classData?.is_distributed && (
                                         <td style={{ textAlign: 'center', fontWeight: 'bold' }}>
                                             {student.previous_section ? `${student.previous_section}반` : '-'}
@@ -980,6 +1062,7 @@ export default function StudentsPage() {
                                             onPaste={(e) => handleFieldPaste(e, index, 'name')}
                                             disabled={isCompleted}
                                             placeholder="이름"
+                                            title="학생 성명"
                                             style={{ margin: 0, padding: '0.25rem', border: 'none', background: 'transparent' }}
                                             onFocus={(e) => e.target.style.borderBottom = '1px solid var(--primary)'}
                                             onBlur={(e) => e.target.style.borderBottom = '1px solid transparent'}
@@ -988,6 +1071,7 @@ export default function StudentsPage() {
                                     <td style={{ textAlign: 'center' }}>
                                         <div
                                             className={`badge ${student.gender === 'M' ? 'badge-male' : 'badge-female'}`}
+                                            title="성별 (클릭하여 변경)"
                                             style={{
                                                 cursor: isCompleted ? 'not-allowed' : 'pointer',
                                                 margin: '0 auto',
@@ -1005,8 +1089,10 @@ export default function StudentsPage() {
                                             className="form-input"
                                             value={student.birth_date || ''}
                                             onChange={(e) => updateStudent(index, 'birth_date', e.target.value)}
+                                            onPaste={(e) => handleFieldPaste(e, index, 'birth_date')}
                                             placeholder="YYMMDD"
                                             disabled={isCompleted}
+                                            title="생년월일 (예: 120510)"
                                             style={{ margin: 0, padding: '0.25rem', border: 'none', background: 'transparent', fontSize: '0.9rem' }}
                                         />
                                     </td>
@@ -1016,6 +1102,7 @@ export default function StudentsPage() {
                                             className="form-input"
                                             value={student.notes || ''}
                                             onChange={(e) => updateStudent(index, 'notes', e.target.value)}
+                                            onPaste={(e) => handleFieldPaste(e, index, 'notes')}
                                             placeholder="-"
                                             disabled={isCompleted}
                                             title={student.notes || ''}
@@ -1038,8 +1125,10 @@ export default function StudentsPage() {
                                             className="form-input"
                                             value={student.contact || ''}
                                             onChange={(e) => updateStudent(index, 'contact', e.target.value)}
+                                            onPaste={(e) => handleFieldPaste(e, index, 'contact')}
                                             placeholder="-"
                                             disabled={isCompleted}
+                                            title="연락처"
                                             style={{ margin: 0, padding: '0.25rem', border: 'none', background: 'transparent', fontSize: '0.9rem' }}
                                         />
                                     </td>
@@ -1055,8 +1144,10 @@ export default function StudentsPage() {
                                                 const val = parseInt(e.target.value.replace(/\D/g, ''), 10);
                                                 updateStudent(index, 'rank', isNaN(val) ? null : val);
                                             }}
+                                            onPaste={(e) => handleFieldPaste(e, index, 'rank')}
                                             placeholder="-"
                                             disabled={isCompleted}
+                                            title="석차 (숫자만 입력)"
                                             style={{ margin: 0, textAlign: 'center', background: 'transparent', border: 'none', width: '100%', minWidth: '50px', padding: '0.25rem' }}
                                         />
                                     </td>
@@ -1066,6 +1157,7 @@ export default function StudentsPage() {
                                             checked={student.is_problem_student}
                                             onChange={(e) => updateStudent(index, 'is_problem_student', e.target.checked)}
                                             disabled={isCompleted}
+                                            title="문제행동 학생"
                                             style={{ width: '18px', height: '18px', cursor: isCompleted ? 'not-allowed' : 'pointer' }}
                                         />
                                     </td>
@@ -1075,6 +1167,7 @@ export default function StudentsPage() {
                                             checked={student.is_special_class}
                                             onChange={(e) => updateStudent(index, 'is_special_class', e.target.checked)}
                                             disabled={isCompleted}
+                                            title="특수교육 대상"
                                             style={{ width: '18px', height: '18px', cursor: isCompleted ? 'not-allowed' : 'pointer' }}
                                         />
                                     </td>
@@ -1084,6 +1177,7 @@ export default function StudentsPage() {
                                             checked={student.is_underachiever}
                                             onChange={(e) => updateStudent(index, 'is_underachiever', e.target.checked)}
                                             disabled={isCompleted}
+                                            title="학습부진 대상"
                                             style={{ width: '18px', height: '18px', cursor: isCompleted ? 'not-allowed' : 'pointer' }}
                                         />
                                     </td>
@@ -1093,6 +1187,7 @@ export default function StudentsPage() {
                                             checked={student.is_transferring_out}
                                             onChange={(e) => updateStudent(index, 'is_transferring_out', e.target.checked)}
                                             disabled={isCompleted}
+                                            title="전출 예정"
                                             style={{ width: '18px', height: '18px', cursor: isCompleted ? 'not-allowed' : 'pointer' }}
                                         />
                                     </td>
@@ -1451,8 +1546,8 @@ export default function StudentsPage() {
                                             if (response.ok) {
                                                 alert('마감이 해지되었습니다.');
                                                 setIsCompleted(false);
+                                                // 불필요한 전체 데이터 리로드(loadClassData) 제거 - 상태 변경만으로 충분함
                                                 router.refresh();
-                                                await loadClassData();
                                             } else {
                                                 throw new Error('해지 실패');
                                             }

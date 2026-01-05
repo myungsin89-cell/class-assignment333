@@ -337,11 +337,13 @@ function ConditionsPageContent() {
     };
 
     const handleOpenGroupModal = (type: 'inner' | 'outer', section?: number) => {
-        if (type === 'inner' && section) {
-            setInnerSeparationModal({ show: true, section });
-        } else {
-            setGroupModal({ show: true, type, section });
+        if (type === 'inner') {
+            if (section) {
+                setInnerSeparationModal({ show: true, section });
+            }
+            return;
         }
+        setGroupModal({ show: true, type, section });
     };
 
     const handleDeleteGroup = async (type: 'inner' | 'outer' | 'sameClass', groupId: string) => {
@@ -431,48 +433,48 @@ function ConditionsPageContent() {
         }
     };
 
-    const handleSave = async (silent: boolean = false) => {
+    const handleSave = async (silent: boolean = false, extraData: any = {}) => {
         console.log('💾 저장 시작...');
-        console.log('📋 Inner Groups:', innerGroups);
-        console.log('📋 Outer Groups:', outerGroups);
-        console.log('📋 BIND Groups:', sameClassGroups);
+        // ... (생략된 로그)
 
         // 유효성 검사
         if (sectionCount <= 0) {
             alert('분반 개수를 입력해주세요.');
-            return;
+            return false;
         }
 
         if (sectionNames.length !== sectionCount) {
             alert('반 이름 설정이 올바르지 않습니다.');
-            return;
+            return false;
         }
 
         // 수동 모드에서 빈 이름 체크
         if (namingMode === 'manual' && sectionNames.some(name => !name.trim())) {
             alert('모든 반 이름을 입력해주세요.');
-            return;
+            return false;
         }
 
         setLoading(true);
         try {
-            // 1. 반 구성 설정 저장 (new_section_count - 기존반 section_count는 변경하지 않음)
+            // 1. 반 구성 설정 저장 및 기타 추가 데이터 (마감 상태 등) 통합 저장
             const classConfigResponse = await fetch(`/api/classes/${classId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    new_section_count: sectionCount,  // section_count 대신 new_section_count 사용
+                    new_section_count: sectionCount,
                     section_names: sectionNames,
                     special_reduction_count: specialReductionCount,
-                    special_reduction_mode: specialReductionMode
+                    special_reduction_mode: specialReductionMode,
+                    ...extraData
                 }),
             });
 
             if (!classConfigResponse.ok) {
-                throw new Error('Failed to save class configuration');
+                const errData = await classConfigResponse.json().catch(() => ({}));
+                throw new Error(errData.error || `Class config save failed: ${classConfigResponse.status}`);
             }
 
-            // 2. 분리/배정 그룹 설정 저장
+            // 2. 분리/배정 그룹 설정 저장 (이제 벌크 업데이트로 처리되어 매우 빠름)
             const constraintMap = new Map<string, string[]>();
 
             const addConstraint = (key: string, val: string) => {
@@ -480,16 +482,13 @@ function ConditionsPageContent() {
                 constraintMap.get(key)!.push(val);
             };
 
-            // 반 내부 분리: 반 번호를 그룹명에 포함하여 각 반의 그룹을 독립적으로 처리
             innerGroups.forEach(g => {
                 g.students.forEach(s => {
-                    // 반 번호를 포함한 고유한 그룹명 생성: "1반-그룹1"
                     const uniqueGroupName = `${s.section_number}반-${g.name}`;
                     addConstraint(`${s.section_number}-${s.name}`, `SEP:${uniqueGroupName}`);
                 });
             });
 
-            // 반 외부 분리: 기존대로 반 번호 없이 저장 (모든 반에 걸쳐 분리)
             outerGroups.forEach(g => {
                 g.students.forEach(s => {
                     addConstraint(`${s.section_number}-${s.name}`, `SEP:${g.name}`);
@@ -513,21 +512,29 @@ function ConditionsPageContent() {
                 body: JSON.stringify({ classId, students: updatedStudents }),
             });
 
-            if (!studentsResponse.ok) throw new Error('Failed to save student groups');
+            if (!studentsResponse.ok) {
+                const errData = await studentsResponse.json().catch(() => ({}));
+                throw new Error(errData.error || `Student groups save failed: ${studentsResponse.status}`);
+            }
 
             setIsSaved(true);
             if (!silent) {
                 alert('설정이 저장되었습니다.');
             }
+            return true;
         } catch (error) {
             console.error(error);
-            alert('저장 중 오류가 발생했습니다.');
-        } finally {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            alert(`저장 중 오류가 발생했습니다: ${msg}`);
+            return false;
+        }
+        finally {
             setLoading(false);
         }
     };
 
     const getGroupColor = (idx: number) => {
+        // ... (생략된 색상 코드)
         const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6'];
         return colors[idx % colors.length];
     };
@@ -555,23 +562,13 @@ function ConditionsPageContent() {
         setDeadlineLoading(true);
         try {
             if (pendingAction === 'complete') {
-                // 먼저 현재 설정 저장 (silent 모드로 alert 표시 안 함)
-                await handleSave(true);
+                // 저장과 마감을 한 번의 요청 세트로 처리 (handleSave 내부에서 통합)
+                const success = await handleSave(true, { conditions_completed: true });
 
-                // 마감 상태 저장
-                const response = await fetch(`/api/classes/${classId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ conditions_completed: true })
-                });
-
-                if (response.ok) {
+                if (success) {
                     setIsConditionsCompleted(true);
-                    // localStorage 임시저장 삭제
                     localStorage.removeItem(`conditions_temp_${classId}`);
                     alert('✅ 조건 설정이 마감되었습니다.');
-                } else {
-                    alert('마감 처리 중 오류가 발생했습니다.');
                 }
             } else {
                 // 마감 해제

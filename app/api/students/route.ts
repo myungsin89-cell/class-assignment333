@@ -65,8 +65,8 @@ export async function POST(request: NextRequest) {
         console.log('💾 [API] 학생 데이터 삽입 시작:', students.length, '명');
 
         for (const student of students) {
-            await sql`INSERT INTO students (class_id, section_number, name, gender, is_problem_student, is_special_class, group_name, rank, birth_date, contact, notes, is_underachiever, is_transferring_out)
-                     VALUES (${classIdInt}, ${sectionInt}, ${student.name}, ${student.gender}, ${student.is_problem_student || false}, ${student.is_special_class || false}, ${student.group_name || null}, ${student.rank || null}, ${student.birth_date || null}, ${student.contact || null}, ${student.notes || null}, ${student.is_underachiever || false}, ${student.is_transferring_out || false})`;
+            await sql`INSERT INTO students (class_id, section_number, student_number, name, gender, is_problem_student, is_special_class, group_name, rank, birth_date, contact, notes, is_underachiever, is_transferring_out)
+                     VALUES (${classIdInt}, ${sectionInt}, ${student.student_number || null}, ${student.name}, ${student.gender}, ${student.is_problem_student || false}, ${student.is_special_class || false}, ${student.group_name || null}, ${student.rank || null}, ${student.birth_date || null}, ${student.contact || null}, ${student.notes || null}, ${student.is_underachiever || false}, ${student.is_transferring_out || false})`;
         }
 
         console.log('✅ [API] 학생 저장 완료:', students.length, '명');
@@ -96,10 +96,11 @@ export async function GET(request: NextRequest) {
         let students;
 
         if (section) {
-            students = await sql`SELECT * FROM students WHERE class_id = ${classId} AND section_number = ${section} ORDER BY id`;
+            students = await sql`SELECT * FROM students WHERE class_id = ${classId} AND section_number = ${section} ORDER BY student_number ASC, id ASC`;
         } else {
-            students = await sql`SELECT * FROM students WHERE class_id = ${classId} ORDER BY id`;
+            students = await sql`SELECT * FROM students WHERE class_id = ${classId} ORDER BY student_number ASC, id ASC`;
         }
+
 
         return NextResponse.json(students);
     } catch (error) {

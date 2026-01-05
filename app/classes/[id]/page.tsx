@@ -17,6 +17,7 @@ interface ClassData {
     is_distributed?: number;
     parent_class_id?: number;
     child_class_id?: number;
+    conditions_completed?: number | boolean;
 }
 
 interface SectionStatus {
@@ -284,27 +285,77 @@ export default function ClassSectionsPage() {
 
                     {/* 3단계 */}
                     <div className="stat-card" style={{
-                        background: 'rgba(30, 41, 59, 0.4)',
-                        border: '1px solid var(--border)',
+                        background: (classData.conditions_completed === 1 || classData.conditions_completed === true)
+                            ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(37, 99, 235, 0.05) 100%)' // 활성화 스타일
+                            : 'rgba(30, 41, 59, 0.4)', // 비활성화 스타일
+                        border: (classData.conditions_completed === 1 || classData.conditions_completed === true)
+                            ? '1px solid rgba(59, 130, 246, 0.3)'
+                            : '1px solid var(--border)',
                         flexDirection: 'column',
                         alignItems: 'flex-start',
-                        opacity: 0.5 // 3단계는 아직 비활성화 (2단계 완료 후 활성화 예정)
+                        opacity: (classData.conditions_completed === 1 || classData.conditions_completed === true) ? 1 : 0.5,
+                        position: 'relative',
+                        transition: 'all 0.3s ease'
                     }}>
                         <div style={{
                             position: 'absolute', top: '1.5rem', right: '1.5rem',
                             width: '36px', height: '36px', borderRadius: '50%',
-                            background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.8)',
+                            background: (classData.conditions_completed === 1 || classData.conditions_completed === true)
+                                ? 'white'
+                                : 'rgba(255,255,255,0.1)',
+                            color: (classData.conditions_completed === 1 || classData.conditions_completed === true)
+                                ? '#3b82f6'
+                                : 'rgba(255,255,255,0.8)',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             fontSize: '1.2rem', fontWeight: 'bold',
-                            border: '1px solid rgba(255,255,255,0.2)'
+                            border: (classData.conditions_completed === 1 || classData.conditions_completed === true)
+                                ? 'none'
+                                : '1px solid rgba(255,255,255,0.2)',
+                            boxShadow: (classData.conditions_completed === 1 || classData.conditions_completed === true)
+                                ? '0 4px 6px rgba(0,0,0,0.1)'
+                                : 'none'
                         }}>3</div>
-                        <div className="stat-icon" style={{ background: 'var(--bg-tertiary)', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                        <div className="stat-icon" style={{
+                            background: (classData.conditions_completed === 1 || classData.conditions_completed === true) ? '#3b82f6' : 'var(--bg-tertiary)',
+                            color: (classData.conditions_completed === 1 || classData.conditions_completed === true) ? 'white' : 'var(--text-muted)',
+                            marginBottom: '1rem'
+                        }}>
                             🎯
                         </div>
-                        <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.2rem', color: 'var(--text-muted)' }}>반편성 결과</h3>
-                        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                        <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '1.2rem', color: (classData.conditions_completed === 1 || classData.conditions_completed === true) ? 'var(--text-primary)' : 'var(--text-muted)' }}>반편성 결과</h3>
+                        <p style={{ margin: 0, color: (classData.conditions_completed === 1 || classData.conditions_completed === true) ? 'var(--text-secondary)' : 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1rem' }}>
                             알고리즘 배정 결과 확인<br />및 수동 조정
                         </p>
+
+                        <button
+                            className="btn"
+                            disabled={!(classData.conditions_completed === 1 || classData.conditions_completed === true)}
+                            onClick={() => router.push(`/classes/${classId}/allocation`)}
+                            style={{
+                                width: '100%',
+                                background: (classData.conditions_completed === 1 || classData.conditions_completed === true)
+                                    ? 'linear-gradient(135deg, #3b82f6, #2563eb)'
+                                    : 'transparent',
+                                color: (classData.conditions_completed === 1 || classData.conditions_completed === true) ? 'white' : 'transparent',
+                                border: 'none',
+                                padding: '0.5rem 1rem',
+                                fontSize: '0.9rem',
+                                fontWeight: 'bold',
+                                borderRadius: '6px',
+                                marginTop: 'auto',
+                                cursor: (classData.conditions_completed === 1 || classData.conditions_completed === true) ? 'pointer' : 'default',
+                                height: '36px',
+                                boxShadow: (classData.conditions_completed === 1 || classData.conditions_completed === true)
+                                    ? '0 4px 12px rgba(59, 130, 246, 0.3)'
+                                    : 'none',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '0.5rem'
+                            }}
+                        >
+                            {(classData.conditions_completed === 1 || classData.conditions_completed === true) ? '결과 확인하기 →' : ''}
+                        </button>
                     </div>
                 </div>
 

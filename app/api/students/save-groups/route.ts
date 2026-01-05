@@ -4,27 +4,57 @@ import db from '@/lib/db';
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { students } = body;
+        const { students, classId } = body;
 
         if (!students || !Array.isArray(students)) {
             return NextResponse.json({ error: 'Invalid data' }, { status: 400 });
         }
 
-        // 트랜잭션으로 처리하는 것이 안전하지만, Neon 호환성 문제로 개별 업데이트 수행
-        // 성능 최적화를 위해 Promise.all 사용
-        const updatePromises = students.map(student =>
-            db`
-                UPDATE students 
-                SET group_name = ${student.group_name} 
-                WHERE name = ${student.name} AND section_number = ${student.section_number}
-            `
-        );
+        const classIdInt = parseInt(classId, 10);
+        if (isNaN(classIdInt)) {
+            return NextResponse.json({ error: 'Invalid class ID' }, { status: 400 });
+        }
 
-        await Promise.all(updatePromises);
+        console.log(`[save-groups] Start saving ${students.length} students for class ${classIdInt}`);
+        const startTime = Date.now();
 
-        return NextResponse.json({ success: true, count: students.length });
+        // 유효한 업데이트 데이터 필터링
+        const updates = students
+            .filter(s => s.id !== undefined && s.id !== null)
+            .map(s => ({
+                id: Number(s.id),
+                group_name: s.group_name || ''
+            }));
+
+        if (updates.length === 0) {
+            console.log('[save-groups] No valid students to update.');
+            return NextResponse.json({ success: true, count: 0 });
+        }
+
+        // 병렬 Promise.all 방식 (안정적이고 적당히 빠름)
+        // 한 번에 50개씩 배치 처리하여 연결 부하 감소
+        const BATCH_SIZE = 50;
+        const batches = [];
+
+        for (let i = 0; i < updates.length; i += BATCH_SIZE) {
+            batches.push(updates.slice(i, i + BATCH_SIZE));
+        }
+
+        for (const batch of batches) {
+            await Promise.all(
+                batch.map(u =>
+                    db`UPDATE students SET group_name = ${u.group_name} WHERE id = ${u.id} AND class_id = ${classIdInt}`
+                )
+            );
+        }
+
+        const elapsed = Date.now() - startTime;
+        console.log(`[save-groups] ✅ Updated ${updates.length} students in ${elapsed}ms (${batches.length} batches)`);
+
+        return NextResponse.json({ success: true, count: updates.length, elapsed });
     } catch (error) {
-        console.error('Error saving groups:', error);
-        return NextResponse.json({ error: 'Failed to save groups' }, { status: 500 });
+        console.error('[save-groups] Error:', error);
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }

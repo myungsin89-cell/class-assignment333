@@ -78,7 +78,83 @@ interface ClassAllocation {
 }
 
 /**
- * 스네이크 방식으로 학생 배정
+ * 스네이크 방식으로 학생 배정 (허수 인원 고려 - Skip-Over-Full 방식)
+ * 스네이크 순서를 따르되, 인원이 많은 반은 건너뛰고 다음 반에 배정
+ */
+function snakeDistributeWithPhantom(
+    students: Student[],
+    classCount: number,
+    startOffset: number = 0,
+    allocation: ClassAllocation,
+    phantomCounts: number[]
+): number[] {
+    const assignments: number[] = [];
+
+    // 각 반의 목표 인원 계산 (허수 인원 고려)
+    const getEffectiveCount = (classIdx: number) => allocation[classIdx].length + phantomCounts[classIdx];
+
+    // 1. 전체 최소 Effective Count 계산
+    let overallMinCount = Infinity;
+    for (let c = 0; c < classCount; c++) {
+        overallMinCount = Math.min(overallMinCount, getEffectiveCount(c));
+    }
+
+    let idx = startOffset % classCount;
+    let direction = 1;
+
+    for (let i = 0; i < students.length; i++) {
+        // 현재 스네이크 타겟
+        let targetIdx = idx;
+
+        // 2. 균형 체크: 유연한 Skip-Over-Full
+        // 현재 전체 최소값 다시 계산
+        let currentMin = getEffectiveCount(0);
+        for (let c = 1; c < classCount; c++) currentMin = Math.min(currentMin, getEffectiveCount(c));
+
+        // 타겟 반이 최소값보다 크면 (즉, 더 채워진 반이면)
+        if (getEffectiveCount(targetIdx) > currentMin) {
+            // 스네이크 방향으로 다음 후보들을 탐색하여 "덜 채워진 반"을 찾음
+            const step = direction;
+            for (let offset = 1; offset < classCount; offset++) {
+                let candidateIdx = (targetIdx + (step * offset)) % classCount;
+                if (candidateIdx < 0) candidateIdx += classCount;
+
+                if (getEffectiveCount(candidateIdx) <= currentMin) {
+                    targetIdx = candidateIdx; // 더 적은 반 발견 -> 여기로 배정
+                    break;
+                }
+            }
+        }
+
+        assignments.push(targetIdx);
+        allocation[targetIdx].push(students[i]);
+
+        // 다음 스네이크 인덱스 갱신 (배정 결과와 무관하게 패턴 유지)
+        if (direction === 1) {
+            if (idx === classCount - 1) {
+                direction = -1;
+            } else {
+                idx += 1;
+            }
+        } else {
+            if (idx === 0) {
+                direction = 1;
+            } else {
+                idx -= 1;
+            }
+        }
+    }
+
+    // 가상 배정 롤백
+    for (let i = students.length - 1; i >= 0; i--) {
+        allocation[assignments[i]].pop();
+    }
+
+    return assignments;
+}
+
+/**
+ * 스네이크 방식으로 학생 배정 (단순 버전, 이전 호환용)
  */
 function snakeDistribute(students: Student[], classCount: number, startOffset: number = 0): number[] {
     const assignments: number[] = [];
@@ -108,9 +184,16 @@ function snakeDistribute(students: Student[], classCount: number, startOffset: n
 }
 
 /**
- * 스네이크 방식 초기 배정 생성
+ * 스네이크 방식 초기 배정 생성 (허수 인원 방식)
+ * @param students 모든 학생
+ * @param classCount 반 개수
+ * @param specialReductionCount 특수교육 반 인원 보정 (예: 2명 감소)
  */
-function createSnakeAllocation(students: Student[], classCount: number): ClassAllocation {
+function createSnakeAllocation(
+    students: Student[],
+    classCount: number,
+    specialReductionCount: number = 0
+): ClassAllocation {
     const allocation: ClassAllocation = {};
     for (let i = 0; i < classCount; i++) {
         allocation[i] = [];
@@ -118,7 +201,12 @@ function createSnakeAllocation(students: Student[], classCount: number): ClassAl
 
     console.log(`🐍 스네이크 방식 배정 시작 - 학생 수: ${students.length}명, 반 수: ${classCount}개`);
 
-    // 1. BIND 그룹 수집
+    // 0. 특수교육 학생 파악 및 허수 인원 계산
+    const specialStudents = students.filter(s => s.is_special_class && !s.is_transferring_out);
+    const phantomCounts: number[] = new Array(classCount).fill(0); // 반별 허수 인원 수
+    const assignedStudentIds = new Set<number>(); // 배정 완료된 학생 ID
+
+    // 1. BIND 그룹 수집 (모든 학생 대상, 특수학생 포함)
     const bindMap = new Map<string, Student[]>();
     const bindStudentIds = new Set<number>();
 
@@ -135,7 +223,7 @@ function createSnakeAllocation(students: Student[], classCount: number): ClassAl
 
     console.log(`🔗 BIND 그룹: ${bindMap.size}개, 총 ${bindStudentIds.size}명`);
 
-    // 2. BIND 블록을 먼저 각 반에 균등 배정
+    // 2. BIND 블록 배정 (허수 인원 고려하여 가장 적은 반에)
     const assignedBindStudentIds = new Set<number>();
     const bindBlocks: Student[][] = [];
     bindMap.forEach(members => {
@@ -144,32 +232,65 @@ function createSnakeAllocation(students: Student[], classCount: number): ClassAl
     bindBlocks.sort((a, b) => b.length - a.length);
 
     bindBlocks.forEach((block, idx) => {
+        // 허수 인원 포함 계산
         let minIdx = 0;
-        let minCount = allocation[0].length;
+        let minCount = allocation[0].length + phantomCounts[0];
         for (let c = 1; c < classCount; c++) {
-            if (allocation[c].length < minCount) {
-                minCount = allocation[c].length;
+            const effectiveCount = allocation[c].length + phantomCounts[c];
+            if (effectiveCount < minCount) {
+                minCount = effectiveCount;
                 minIdx = c;
             }
         }
 
+        // BIND 블록에 특수학생이 포함되어 있으면 해당 반에 허수 인원 적용
+        const hasSpecialStudent = block.some(s => s.is_special_class && !s.is_transferring_out);
+        if (hasSpecialStudent && specialReductionCount > 0) {
+            phantomCounts[minIdx] = specialReductionCount;
+            console.log(`   ⚡ BIND 블록에 특수학생 포함 → ${minIdx + 1}반에 허수 ${specialReductionCount}명 적용`);
+        }
+
         block.forEach(s => {
-            if (!assignedBindStudentIds.has(s.id)) {
+            if (!assignedBindStudentIds.has(s.id) && !assignedStudentIds.has(s.id)) {
                 allocation[minIdx].push(s);
                 assignedBindStudentIds.add(s.id);
+                assignedStudentIds.add(s.id);
             }
         });
 
         console.log(`   BIND 블록 ${idx + 1} (${block.length}명) → ${minIdx + 1}반`);
     });
 
-    // 3. 나머지 학생을 기존반별, 성별별로 스네이크 배정
+    // 3. 나머지 특수교육 학생 배정 (BIND 그룹에 포함되지 않은 특수학생만)
+    if (specialReductionCount > 0 && specialStudents.length > 0) {
+        const unassignedSpecialStudents = specialStudents.filter(s => !assignedStudentIds.has(s.id));
+
+        if (unassignedSpecialStudents.length > 0) {
+            console.log(`👻 허수 인원 방식 적용: 미배정 특수학생 ${unassignedSpecialStudents.length}명, 보정 ${specialReductionCount}명/반`);
+
+            // 특수교육 학생을 순서대로 1, 2, 3... 반에 배정
+            unassignedSpecialStudents.forEach((student, idx) => {
+                const classIdx = idx % classCount; // 0, 1, 2... 순서대로
+
+                allocation[classIdx].push(student);
+                assignedStudentIds.add(student.id);
+                // 해당 반에 허수 인원 추가
+                phantomCounts[classIdx] = specialReductionCount;
+                console.log(`   특수학생 ${student.name} → ${classIdx + 1}반 (허수 ${specialReductionCount}명 추가)`);
+            });
+        }
+    }
+
+    // 3. 나머지 학생 스네이크 배정 (허수 인원 고려)
     const sectionNumbers = [...new Set(students.map(s => s.section_number || 0))].sort((a, b) => a - b);
     console.log(`📋 기존반 수: ${sectionNumbers.length}개`);
 
+    // 모든 배정된 학생 ID 수집
+    const allAssignedIds = new Set([...assignedStudentIds, ...assignedBindStudentIds]);
+
     sectionNumbers.forEach(sectionNum => {
         const sectionStudents = students.filter(s =>
-            s.section_number === sectionNum && !assignedBindStudentIds.has(s.id)
+            s.section_number === sectionNum && !allAssignedIds.has(s.id)
         );
 
         // 남학생
@@ -177,25 +298,35 @@ function createSnakeAllocation(students: Student[], classCount: number): ClassAl
         // 여학생 
         const females = sectionStudents.filter(s => s.gender === 'F').sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
+        // 스네이크 방식으로 배정 (허수 인원 고려)
         const startOffset = (sectionNum - 1) % classCount;
 
-        // 남학생 스네이크 배정
-        const maleAssignments = snakeDistribute(males, classCount, startOffset);
+        // 남학생 스네이크 배정 (허수 인원 고려)
+        const maleAssignments = snakeDistributeWithPhantom(males, classCount, startOffset, allocation, phantomCounts);
         males.forEach((student, i) => {
             allocation[maleAssignments[i]].push(student);
         });
 
-        // 여학생 스네이크 배정 (시작점 살짝 다르게)
-        const femaleAssignments = snakeDistribute(females, classCount, (startOffset + 1) % classCount);
+        // 여학생 스네이크 배정 (허수 인원 고려)
+        const femaleAssignments = snakeDistributeWithPhantom(females, classCount, (startOffset + 1) % classCount, allocation, phantomCounts);
         females.forEach((student, i) => {
             allocation[femaleAssignments[i]].push(student);
         });
 
-        console.log(`   기존 ${sectionNum}반: 남 ${males.length}명, 여 ${females.length}명 배정 완료`);
+        console.log(`   기존 ${sectionNum}반: 남 ${males.length}명, 여 ${females.length}명 스네이크 배정 완료`);
     });
+
+    // 4. 최종 인원 확인 (허수 인원은 실제 학생이 아니므로 제거할 필요 없음)
+    console.log(`📊 배정 결과 (허수 인원 제외):`);
+    for (let c = 0; c < classCount; c++) {
+        const realCount = allocation[c].length;
+        const phantom = phantomCounts[c];
+        console.log(`   ${c + 1}반: 실제 ${realCount}명${phantom > 0 ? ` (허수 ${phantom}명 적용됨)` : ''}`);
+    }
 
     return allocation;
 }
+
 
 // ========================================
 // 제약 조건 해결
@@ -219,6 +350,9 @@ function findSwapPartner(
         // 2. BIND 그룹 학생은 제외
         const { bind } = parseConstraints(s);
         if (bind.length > 0) return false;
+
+        // 3. 특수교육 학생은 교환 대상에서 제외 (허수 인원 배정 반 유지)
+        if (s.is_special_class) return false;
 
         // 3. SEP 위배하지 않는지 확인
         const { sep: studentSep } = parseConstraints(student);
@@ -306,8 +440,18 @@ function resolveConstraintViolations(
 
         sepGroups.forEach((members, groupName) => {
             if (members.length > 1) {
-                // 한 명을 다른 반으로 교환
-                const studentToMove = members[0];
+                // BIND 그룹에 속하지 않은 학생 중에서 이동 대상 선택
+                const movableMember = members.find(m => {
+                    const { bind } = parseConstraints(m);
+                    return bind.length === 0; // BIND 그룹에 속하지 않은 학생
+                });
+
+                if (!movableMember) {
+                    console.log(`     ⚠️ SEP "${groupName}": 모든 멤버가 BIND 그룹에 속함 - 이동 불가`);
+                    return; // BIND 그룹 학생은 이동하지 않음
+                }
+
+                const studentToMove = movableMember;
                 for (let targetClass = 0; targetClass < classCount; targetClass++) {
                     if (targetClass === c) continue;
 
@@ -555,152 +699,111 @@ function adjustSpecialClassSize(
 
     console.log(`   특수교육 반: ${specialClassIndices.length}개 (${specialClassIndices.map(i => i + 1).join(', ')}반)`);
 
-    if (mode === 'force') {
-        // 강제 모드: 모든 특수교육 반에서 정확히 reductionCount만큼 감소
-        console.log('   강제 적용: 모든 특수교육 반에서 정확히 감소');
+    // 2. 맞교환 기반 조정 (인원 균형 유지)
+    // 특수교육 반에서 일반 학생을 빼고, 일반 반에서 같은 성별+비슷한 석차 학생을 교환
+    console.log('   맞교환 방식으로 인원 균형 유지');
 
-        for (const specialIdx of specialClassIndices) {
-            const movableStudents = allocation[specialIdx].filter(s => {
-                // 이동 가능한 학생: 일반 학생, BIND 없음, 전출예정 아님
-                const { bind } = parseConstraints(s);
-                return !s.is_special_class && !s.is_problem_student && !s.is_underachiever &&
-                    !s.is_transferring_out && bind.length === 0;
-            });
+    let totalSwaps = 0;
+    const targetReductionPerClass = mode === 'force' ? reductionCount : Math.ceil(reductionCount * 0.5);
 
-            const toMove = movableStudents.slice(0, reductionCount);
-            let movedCount = 0;
+    for (const specialIdx of specialClassIndices) {
+        let swapsForThisClass = 0;
 
-            for (const student of toMove) {
-                // 인원이 가장 적은 일반 반으로 이동
-                let minIdx = normalClassIndices[0];
-                let minCount = allocation[minIdx].filter(s => !s.is_transferring_out).length;
+        // 특수교육 반에서 이동 가능한 학생들 찾기
+        const movableStudents = allocation[specialIdx].filter(s => {
+            const { bind } = parseConstraints(s);
+            return !s.is_special_class && !s.is_problem_student && !s.is_underachiever &&
+                !s.is_transferring_out && bind.length === 0;
+        });
 
-                for (const idx of normalClassIndices) {
-                    const count = allocation[idx].filter(s => !s.is_transferring_out).length;
-                    if (count < minCount) {
-                        minCount = count;
-                        minIdx = idx;
-                    }
-                }
+        // 석차순 정렬 (석차가 낮은 학생부터)
+        movableStudents.sort((a, b) => (b.rank || 0) - (a.rank || 0));
 
-                // SEP 위배 확인
-                const { sep } = parseConstraints(student);
-                let canMove = true;
-                for (const groupName of sep) {
-                    const members = sepGroupMap.get(groupName) || [];
-                    if (members.some(m => m.id !== student.id && allocation[minIdx].some(st => st.id === m.id))) {
-                        canMove = false;
-                        break;
-                    }
-                }
+        for (const student of movableStudents) {
+            if (swapsForThisClass >= targetReductionPerClass) break;
 
-                if (canMove) {
+            // 일반 반 중에서 교환 파트너 찾기 (인원이 가장 많은 반 우선)
+            const normalClassesBySize = [...normalClassIndices].sort((a, b) =>
+                allocation[b].filter(s => !s.is_transferring_out).length -
+                allocation[a].filter(s => !s.is_transferring_out).length
+            );
+
+            for (const normalIdx of normalClassesBySize) {
+                const partner = findSwapPartner(student, specialIdx, normalIdx, allocation, sepGroupMap, bindGroupMap);
+
+                if (partner) {
+                    // 맞교환 실행
                     allocation[specialIdx] = allocation[specialIdx].filter(s => s.id !== student.id);
-                    allocation[minIdx].push(student);
-                    movedCount++;
-                }
-            }
+                    allocation[normalIdx] = allocation[normalIdx].filter(s => s.id !== partner.id);
+                    allocation[specialIdx].push(partner);
+                    allocation[normalIdx].push(student);
 
-            console.log(`   ${specialIdx + 1}반: ${movedCount}명 이동`);
-        }
-    } else {
-        // 유연 모드: 전체 균형 유지 (최대 차이 ≤ 2)
-        console.log('   유연 적용: 전체 균형 유지하며 감소');
-
-        const getCurrentClassSizes = () => {
-            const sizes: number[] = [];
-            for (let c = 0; c < classCount; c++) {
-                sizes.push(allocation[c].filter(s => !s.is_transferring_out).length);
-            }
-            return sizes;
-        };
-
-        // 반복적으로 조정
-        for (let iter = 0; iter < 20; iter++) {
-            const sizes = getCurrentClassSizes();
-            const maxSize = Math.max(...sizes);
-            const minSize = Math.min(...sizes);
-
-            // 균형 체크
-            if (maxSize - minSize <= 2) {
-                const specialSizes = specialClassIndices.map(idx => sizes[idx]);
-                const normalSizes = normalClassIndices.map(idx => sizes[idx]);
-                const avgNormal = normalSizes.length > 0 ? normalSizes.reduce((a, b) => a + b, 0) / normalSizes.length : 0;
-                const avgSpecial = specialSizes.reduce((a, b) => a + b, 0) / specialSizes.length;
-
-                // 특수교육 반이 충분히 작으면 종료
-                if (avgSpecial <= avgNormal - reductionCount * 0.5) {
+                    swapsForThisClass++;
+                    totalSwaps++;
+                    console.log(`     ${specialIdx + 1}반 ↔ ${normalIdx + 1}반: ${student.name} ↔ ${partner.name}`);
                     break;
                 }
             }
+        }
 
-            // 가장 큰 특수교육 반에서 학생 이동
-            let maxSpecialIdx = -1;
-            let maxSpecialSize = 0;
-            for (const idx of specialClassIndices) {
-                if (sizes[idx] > maxSpecialSize) {
-                    maxSpecialSize = sizes[idx];
-                    maxSpecialIdx = idx;
-                }
-            }
+        console.log(`   ${specialIdx + 1}반: ${swapsForThisClass}건 교환 완료`);
+    }
 
-            if (maxSpecialIdx === -1) break;
+    // 3. 최종 인원 확인 및 미세 조정
+    const getCurrentClassSizes = () => {
+        const sizes: number[] = [];
+        for (let c = 0; c < classCount; c++) {
+            sizes.push(allocation[c].filter(s => !s.is_transferring_out).length);
+        }
+        return sizes;
+    };
 
-            // 이동 가능한 학생 찾기
-            const movableStudents = allocation[maxSpecialIdx].filter(s => {
+    const sizes = getCurrentClassSizes();
+    const maxSize = Math.max(...sizes);
+    const minSize = Math.min(...sizes);
+
+    console.log(`   📊 인원 편차: ${maxSize - minSize}명 (max ${maxSize}, min ${minSize})`);
+
+    // 편차가 2명을 초과하면 추가 조정
+    if (maxSize - minSize > 2) {
+        console.log('   ⚠️ 편차 초과, 추가 균형 조정 시도');
+
+        for (let iter = 0; iter < 10; iter++) {
+            const currentSizes = getCurrentClassSizes();
+            const maxIdx = currentSizes.indexOf(Math.max(...currentSizes));
+            const minIdx = currentSizes.indexOf(Math.min(...currentSizes));
+
+            if (currentSizes[maxIdx] - currentSizes[minIdx] <= 2) break;
+
+            // 가장 큰 반에서 가장 작은 반으로 교환
+            const movable = allocation[maxIdx].find(s => {
                 const { bind } = parseConstraints(s);
-                return !s.is_special_class && !s.is_problem_student && !s.is_underachiever &&
-                    !s.is_transferring_out && bind.length === 0;
+                return !s.is_special_class && !s.is_transferring_out && bind.length === 0;
             });
 
-            if (movableStudents.length === 0) break;
-
-            const student = movableStudents[0];
-
-            // 가장 작은 일반 반으로 이동
-            let minNormalIdx = normalClassIndices[0];
-            let minNormalSize = sizes[minNormalIdx];
-            for (const idx of normalClassIndices) {
-                if (sizes[idx] < minNormalSize) {
-                    minNormalSize = sizes[idx];
-                    minNormalIdx = idx;
-                }
-            }
-
-            // 이동 후 균형 체크
-            if (maxSpecialSize - 1 - (minNormalSize + 1) > 2) {
-                // 이동하면 균형이 더 나빠지므로 중단
-                break;
-            }
-
-            // SEP 위배 확인
-            const { sep } = parseConstraints(student);
-            let canMove = true;
-            for (const groupName of sep) {
-                const members = sepGroupMap.get(groupName) || [];
-                if (members.some(m => m.id !== student.id && allocation[minNormalIdx].some(st => st.id === m.id))) {
-                    canMove = false;
+            if (movable) {
+                const partner = findSwapPartner(movable, maxIdx, minIdx, allocation, sepGroupMap, bindGroupMap);
+                if (partner) {
+                    allocation[maxIdx] = allocation[maxIdx].filter(s => s.id !== movable.id);
+                    allocation[minIdx] = allocation[minIdx].filter(s => s.id !== partner.id);
+                    allocation[maxIdx].push(partner);
+                    allocation[minIdx].push(movable);
+                    console.log(`     균형 조정: ${movable.name} ↔ ${partner.name}`);
+                } else {
                     break;
                 }
-            }
-
-            if (canMove) {
-                allocation[maxSpecialIdx] = allocation[maxSpecialIdx].filter(s => s.id !== student.id);
-                allocation[minNormalIdx].push(student);
             } else {
                 break;
             }
         }
 
-        // 결과 출력
         const finalSizes = getCurrentClassSizes();
-        for (const idx of specialClassIndices) {
-            console.log(`   ${idx + 1}반: ${finalSizes[idx]}명`);
-        }
+        console.log(`   📊 최종 편차: ${Math.max(...finalSizes) - Math.min(...finalSizes)}명`);
     }
 
-    console.log('✅ 특수교육 반 인원 조정 완료\n');
+    console.log(`✅ 특수교육 반 인원 조정 완료 (총 ${totalSwaps}건 교환)\n`);
 }
+
 
 
 // ========================================
@@ -710,100 +813,46 @@ function adjustSpecialClassSize(
 export function allocateStudents(
     students: Student[],
     classCount: number,
-    options?: {
-        specialReductionCount?: number;
-        specialReductionMode?: 'force' | 'flexible';
-    }
+    specialReductionCount: number = 0,
+    specialReductionMode: 'force' | 'flexible' = 'flexible'
 ): AllocationResult {
-    console.log(`\n🚀 반배정 알고리즘 시작 (스네이크 방식)`);
-    console.log(`📊 학생 수: ${students.length}명, 반 수: ${classCount}개`);
+    // 1. 스네이크 방식으로 초기 배정
+    const allocation = createSnakeAllocation(students, classCount, specialReductionCount);
 
-    // 0. 전출예정 학생 분리
-    const transferringStudents = students.filter(s => s.is_transferring_out);
-    const normalStudents = students.filter(s => !s.is_transferring_out);
+    // 2. 동명이인 탐지 (필요시 사용)
+    const sameNames = detectSameNames(students);
 
-    console.log(`🚌 전출예정 학생: ${transferringStudents.length}명 (배정에서 제외)`);
-    console.log(`👨‍🎓 일반 학생: ${normalStudents.length}명 (배정 대상)`);
-
-    // 1. 동명이인 감지
-    const sameNames = detectSameNames(normalStudents);
-    console.log(`👥 완전 동명이인: ${sameNames.exactDuplicates.length}개`);
-    console.log(`👥 이름만 같은 학생: ${sameNames.similarNames.length}개`);
-
-    // 2. 스네이크 방식으로 초기 배정
-    const allocation = createSnakeAllocation(normalStudents, classCount);
-
-    // 3. 전출예정 학생을 각 반에 균등 배정
-    console.log(`\n🚌 전출예정 학생 배정:`);
-    let transferIdx = 0;
-    for (const student of transferringStudents) {
-        allocation[transferIdx % classCount].push(student);
-        console.log(`   ${student.name} → ${(transferIdx % classCount) + 1}반`);
-        transferIdx++;
-    }
-
-    // 4. 제약 조건 해결
+    // 3. 제약 조건 해결
     resolveConstraintViolations(allocation, classCount, sameNames);
 
-    // 5. 특수교육 반 인원 조정
-    const specialReductionCount = options?.specialReductionCount || 0;
-    const specialReductionMode = options?.specialReductionMode || 'flexible';
+    // 4. 최종 정렬 및 반환 포맷 변환
+    const classes = [];
+    for (let c = 0; c < classCount; c++) {
+        const sortedStudents = sortClassStudents(allocation[c]);
 
-    if (specialReductionCount > 0) {
-        console.log(`📚 특수교육 배려 인원: -${specialReductionCount}명 (${specialReductionMode === 'force' ? '강제' : '유연'} 적용)`);
-
-        // SEP, BIND 그룹 맵 생성 (adjustSpecialClassSize에서 필요)
-        const sepGroupMap = new Map<string, Student[]>();
-        const bindGroupMap = new Map<string, Student[]>();
-
-        Object.values(allocation).forEach(students => {
-            students.forEach(s => {
-                const { sep, bind } = parseConstraints(s);
-                sep.forEach(groupName => {
-                    if (!sepGroupMap.has(groupName)) sepGroupMap.set(groupName, []);
-                    sepGroupMap.get(groupName)!.push(s);
-                });
-                bind.forEach(groupName => {
-                    if (!bindGroupMap.has(groupName)) bindGroupMap.set(groupName, []);
-                    bindGroupMap.get(groupName)!.push(s);
-                });
-            });
-        });
-
-        adjustSpecialClassSize(allocation, classCount, specialReductionCount, specialReductionMode, sepGroupMap, bindGroupMap);
-    }
-
-    // 6. AllocationResult 형식으로 변환
-    const classes: AllocationResult['classes'] = [];
-    for (let i = 0; i < classCount; i++) {
-        const classStudents = sortClassStudents(allocation[i]);
-
+        // 통계 계산
         const genderStats = {
-            male: classStudents.filter(s => s.gender === 'M').length,
-            female: classStudents.filter(s => s.gender === 'F').length
+            male: sortedStudents.filter(s => s.gender === 'M').length,
+            female: sortedStudents.filter(s => s.gender === 'F').length
         };
 
         const specialFactors = {
-            problem: classStudents.filter(s => s.is_problem_student).length,
-            special: classStudents.filter(s => s.is_special_class).length,
-            underachiever: classStudents.filter(s => s.is_underachiever).length,
-            transfer: classStudents.filter(s => s.is_transferring_out).length
+            problem: sortedStudents.filter(s => s.is_problem_student).length,
+            special: sortedStudents.filter(s => s.is_special_class).length,
+            underachiever: sortedStudents.filter(s => s.is_underachiever).length,
+            transfer: sortedStudents.filter(s => s.is_transferring_out).length
         };
 
         classes.push({
-            id: i + 1,
-            students: classStudents,
+            id: c + 1,
+            students: sortedStudents,
             gender_stats: genderStats,
             special_factors: specialFactors
         });
-
-        console.log(`${i + 1}반: ${classStudents.length}명 (남${genderStats.male}, 여${genderStats.female})`);
     }
 
-    console.log('\n✅ 반배정 완료!\n');
-
     return {
-        classId: 0,
+        classId: 0, // 임시 ID
         classes
     };
 }
