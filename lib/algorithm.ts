@@ -19,7 +19,6 @@ function parseConstraints(student: Student) {
  */
 function extractGivenName(fullName: string): string {
     const trimmed = fullName.trim();
-    // 한글 이름: 첫 글자를 성으로 간주하고 나머지를 이름으로
     if (trimmed.length >= 2) {
         return trimmed.substring(1);
     }
@@ -35,13 +34,11 @@ function detectSameNames(students: Student[]) {
 
     students.forEach(s => {
         const fullName = s.name.trim();
-        // 완전 동명이인
         if (!nameMap.has(fullName)) {
             nameMap.set(fullName, []);
         }
         nameMap.get(fullName)!.push(s);
 
-        // 이름만 같은 학생 (성 제외)
         const givenName = extractGivenName(fullName);
         if (givenName) {
             if (!givenNameMap.has(givenName)) {
@@ -51,22 +48,18 @@ function detectSameNames(students: Student[]) {
         }
     });
 
-    const exactDuplicates: string[] = []; // 완전 동명이인 (성+이름 동일)
-    const similarNames: string[] = []; // 이름만 같음
+    const exactDuplicates: string[] = [];
+    const similarNames: string[] = [];
 
-    // 완전 동명이인 추출
     nameMap.forEach((students, name) => {
         if (students.length > 1) {
             exactDuplicates.push(name);
         }
     });
 
-    // 이름만 같은 학생 추출 (완전 동명이인 제외)
     givenNameMap.forEach((students, givenName) => {
         if (students.length > 1) {
-            // 모두 같은 전체 이름인지 확인 (완전 동명이인인지)
             const uniqueFullNames = new Set(students.map(s => s.name.trim()));
-            // 전체 이름이 다르면 (이름만 같은 경우)
             if (uniqueFullNames.size > 1) {
                 similarNames.push(givenName);
             }
@@ -76,46 +69,8 @@ function detectSameNames(students: Student[]) {
     return { exactDuplicates, similarNames };
 }
 
-/**
- * BIND 그룹별로 학생들을 묶기
- */
-function groupBindStudents(students: Student[]) {
-    const bindMap = new Map<string, Student[]>();
-    const processed = new Set<number>();
-    const blocks: Student[][] = [];
-
-    // BIND 그룹 수집
-    students.forEach(s => {
-        const { bind } = parseConstraints(s);
-        bind.forEach(groupName => {
-            if (!bindMap.has(groupName)) {
-                bindMap.set(groupName, []);
-            }
-            bindMap.get(groupName)!.push(s);
-        });
-    });
-
-    // BIND 그룹을 블록으로 변환
-    bindMap.forEach((members, groupName) => {
-        const blockStudents = members.filter(s => !processed.has(s.id));
-        if (blockStudents.length > 0) {
-            blockStudents.forEach(s => processed.add(s.id));
-            blocks.push(blockStudents);
-        }
-    });
-
-    // 나머지 개별 학생들
-    students.forEach(s => {
-        if (!processed.has(s.id)) {
-            blocks.push([s]);
-        }
-    });
-
-    return blocks;
-}
-
 // ========================================
-// 평가 함수 (Cost Function)
+// 스네이크 배정
 // ========================================
 
 interface ClassAllocation {
@@ -123,225 +78,47 @@ interface ClassAllocation {
 }
 
 /**
- * 배정안의 제약 위반을 점수화
- * 점수가 낮을수록 좋은 배정
+ * 스네이크 방식으로 학생 배정
  */
-function calculateCost(allocation: ClassAllocation, classCount: number, sameNames: { exactDuplicates: string[], similarNames: string[] }): number {
-    let cost = 0;
+function snakeDistribute(students: Student[], classCount: number, startOffset: number = 0): number[] {
+    const assignments: number[] = [];
+    let idx = startOffset % classCount;
+    let direction = 1; // 1: 정방향, -1: 역방향
 
-    // 1. 필수 분리 위반 (SEP) - 최우선 하드 제약
-    // 반내부분리, 반외부분리는 반드시 지켜져야 하는 교육적 제약
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = allocation[c] || [];
-        const sepGroups = new Map<string, number>();
+    for (let i = 0; i < students.length; i++) {
+        assignments.push(idx);
 
-        classStudents.forEach(s => {
-            const { sep } = parseConstraints(s);
-            sep.forEach(g => {
-                sepGroups.set(g, (sepGroups.get(g) || 0) + 1);
-            });
-        });
-
-        sepGroups.forEach(count => {
-            if (count > 1) {
-                cost += 10000 * (count - 1); // 같은 SEP 그룹이 n명 있으면 (n-1)*10000점 (하드 제약)
+        // 다음 인덱스 계산
+        if (direction === 1) {
+            if (idx === classCount - 1) {
+                direction = -1;
+            } else {
+                idx += 1;
             }
-        });
-    }
-
-    // 2. 완전 동명이인 분리 위반 - 최우선 (하드 제약)
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = allocation[c] || [];
-        const nameCount = new Map<string, number>();
-
-        classStudents.forEach(s => {
-            const name = s.name.trim();
-            if (sameNames.exactDuplicates.includes(name)) {
-                nameCount.set(name, (nameCount.get(name) || 0) + 1);
-            }
-        });
-
-        nameCount.forEach(count => {
-            if (count > 1) {
-                cost += 10000 * (count - 1); // 완전 동명이인이 같은 반에 있으면 매우 큰 패널티
-            }
-        });
-    }
-
-    // 2-1. 이름만 같은 학생들 분산 (소프트 제약)
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = allocation[c] || [];
-        const givenNameCount = new Map<string, number>();
-
-        classStudents.forEach(s => {
-            const givenName = extractGivenName(s.name.trim());
-            if (sameNames.similarNames.includes(givenName)) {
-                givenNameCount.set(givenName, (givenNameCount.get(givenName) || 0) + 1);
-            }
-        });
-
-        givenNameCount.forEach(count => {
-            if (count > 1) {
-                // 이름만 같은 학생이 같은 반에 여러 명 있으면 패널티
-                // 2명: 500, 3명: 1000, 4명: 1500...
-                cost += 500 * (count - 1);
-            }
-        });
-    }
-
-    // 3. 남녀 1등 같은 반 배정 위반
-    const maleTop = allocation[0]?.concat(...Object.values(allocation))
-        .filter(s => s.gender === 'M')
-        .sort((a, b) => (a.rank || 999) - (b.rank || 999))[0];
-    const femaleTop = allocation[0]?.concat(...Object.values(allocation))
-        .filter(s => s.gender === 'F')
-        .sort((a, b) => (a.rank || 999) - (b.rank || 999))[0];
-
-    if (maleTop && femaleTop) {
-        for (let c = 0; c < classCount; c++) {
-            const classStudents = allocation[c] || [];
-            if (classStudents.includes(maleTop) && classStudents.includes(femaleTop)) {
-                cost += 500; // 남녀 1등이 같은 반
+        } else {
+            if (idx === 0) {
+                direction = 1;
+            } else {
+                idx -= 1;
             }
         }
     }
 
-    // 4. 특수교육 학생 분리 - 최우선 (하드 제약)
-    // 특수교육 학생은 무조건 다른 반에 배치되어야 함
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = allocation[c] || [];
-        const specialCount = classStudents.filter(s => s.is_special_class).length;
-        if (specialCount > 1) {
-            cost += 10000 * (specialCount - 1); // 특수교육 학생이 같은 반에 2명 이상이면 매우 큰 패널티
-        }
-    }
-
-    // 5. 문제행동 학생 균등 분산 (최우선 소프트 제약)
-    // 각 반의 문제행동 학생 수가 평균에서 벗어날수록 큰 패널티
-    const allStudents = Object.values(allocation).flat();
-    const totalProblem = allStudents.filter(s => s.is_problem_student).length;
-    const avgProblem = totalProblem / classCount;
-
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = allocation[c] || [];
-        const problemCount = classStudents.filter(s => s.is_problem_student).length;
-        const deviation = Math.abs(problemCount - avgProblem);
-        // 편차 1당 3000점 (예: 평균 1명인데 2명이면 3000점, 0명이면 3000점)
-        // 기존반 균등 분배(2000점)보다 높은 우선순위
-        cost += deviation * 3000;
-    }
-
-    // 6. 학습부진 학생 균등 분산 (최우선 소프트 제약)
-    // 각 반의 학습부진 학생 수가 평균에서 벗어날수록 큰 패널티
-    const totalUnder = allStudents.filter(s => s.is_underachiever).length;
-    const avgUnder = totalUnder / classCount;
-
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = allocation[c] || [];
-        const underCount = classStudents.filter(s => s.is_underachiever).length;
-        const deviation = Math.abs(underCount - avgUnder);
-        // 편차 1당 3000점 (예: 평균 1명인데 2명이면 3000점, 0명이면 3000점)
-        // 기존반 균등 분배(2000점)보다 높은 우선순위
-        cost += deviation * 3000;
-    }
-
-    // 7. 성별 균형 (반 내 남녀 비율 + 반 간 성별 분포)
-    const classSizes = Object.values(allocation).map(students => students.length);
-    const avgSize = classSizes.reduce((a, b) => a + b, 0) / classCount;
-
-    // 각 반 남녀 인원 수집
-    const maleCounts: number[] = [];
-    const femaleCounts: number[] = [];
-
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = allocation[c] || [];
-        const maleCount = classStudents.filter(s => s.gender === 'M').length;
-        const femaleCount = classStudents.filter(s => s.gender === 'F').length;
-        maleCounts.push(maleCount);
-        femaleCounts.push(femaleCount);
-
-        // 7-1. 반 내 남녀 비율 (기존 유지)
-        const imbalance = Math.abs(maleCount - femaleCount);
-        cost += imbalance * 50;
-    }
-
-    // 7-2. 반 간 남학생 수 분포 균형 (새로 추가)
-    // 반 간에 남학생 수 차이가 2명 초과시 패널티 부여
-    const maxMales = Math.max(...maleCounts);
-    const minMales = Math.min(...maleCounts);
-    const maleGap = maxMales - minMales;
-    if (maleGap > 2) {
-        cost += (maleGap - 2) * 1500;  // 2명 초과 차이시 큰 패널티
-    }
-
-    // 7-3. 반 간 여학생 수 분포 균형 (새로 추가)
-    // 반 간에 여학생 수 차이가 2명 초과시 패널티 부여
-    const maxFemales = Math.max(...femaleCounts);
-    const minFemales = Math.min(...femaleCounts);
-    const femaleGap = maxFemales - minFemales;
-    if (femaleGap > 2) {
-        cost += (femaleGap - 2) * 1500;  // 2명 초과 차이시 큰 패널티
-    }
-
-    // 8. 정원 균형 (전출예정 제외)
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = allocation[c] || [];
-        const actualSize = classStudents.filter(s => !s.is_transferring_out).length;
-        const deviation = Math.abs(actualSize - avgSize);
-        cost += deviation * 30;
-    }
-
-    // 9. 기존반 균등 분배 (최우선 제약) ⭐ 새로 추가
-    // 각 기존반 학생들이 새 반에 균등하게 배정되었는지 확인
-    const sectionDistribution = new Map<number, Map<number, number>>();
-
-    // 기존반별로 각 새 반에 몇 명씩 배정되었는지 계산
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = allocation[c] || [];
-        classStudents.forEach(s => {
-            const oldSection = s.section_number || 0;
-            if (!sectionDistribution.has(oldSection)) {
-                sectionDistribution.set(oldSection, new Map());
-            }
-            const sectionMap = sectionDistribution.get(oldSection)!;
-            sectionMap.set(c, (sectionMap.get(c) || 0) + 1);
-        });
-    }
-
-    // 각 기존반에서 새 반으로의 분배가 균등한지 평가
-    sectionDistribution.forEach((newClassCounts, oldSection) => {
-        const counts = Array.from(newClassCounts.values());
-        const totalCount = counts.reduce((a, b) => a + b, 0);
-        const targetPerClass = totalCount / classCount;
-
-        // 각 새 반의 인원수가 목표치에서 얼마나 벗어났는지 계산
-        counts.forEach(count => {
-            const deviation = Math.abs(count - targetPerClass);
-            cost += deviation * 2000; // 최우선 가중치 (SEP, 동명이인보다 더 중요)
-        });
-    });
-
-    return cost;
+    return assignments;
 }
 
-// ========================================
-// 초기 해 생성
-// ========================================
-
 /**
- * 기존반별 균등 배정 + BIND 그룹 필수 적용
- * 
- * 핵심 원칙:
- * 1. BIND 그룹은 절대로 분리되지 않음 (블록 단위로 배정)
- * 2. 기존 반 학생들이 새 반에 균등하게 배정됨
+ * 스네이크 방식 초기 배정 생성
  */
-function createInitialAllocation(students: Student[], classCount: number): ClassAllocation {
+function createSnakeAllocation(students: Student[], classCount: number): ClassAllocation {
     const allocation: ClassAllocation = {};
     for (let i = 0; i < classCount; i++) {
         allocation[i] = [];
     }
 
-    // 1. BIND 그룹 수집 및 블록 생성
+    console.log(`🐍 스네이크 방식 배정 시작 - 학생 수: ${students.length}명, 반 수: ${classCount}개`);
+
+    // 1. BIND 그룹 수집
     const bindMap = new Map<string, Student[]>();
     const bindStudentIds = new Set<number>();
 
@@ -356,19 +133,17 @@ function createInitialAllocation(students: Student[], classCount: number): Class
         });
     });
 
-    // BIND 블록 목록 (크기 순으로 정렬 - 큰 블록 먼저 배정)
+    console.log(`🔗 BIND 그룹: ${bindMap.size}개, 총 ${bindStudentIds.size}명`);
+
+    // 2. BIND 블록을 먼저 각 반에 균등 배정
+    const assignedBindStudentIds = new Set<number>();
     const bindBlocks: Student[][] = [];
     bindMap.forEach(members => {
         bindBlocks.push(members);
     });
     bindBlocks.sort((a, b) => b.length - a.length);
 
-    console.log(`🔗 BIND 그룹: ${bindBlocks.length}개, 총 ${bindStudentIds.size}명`);
-
-    // 2. BIND 블록을 먼저 각 반에 균등 배정
-    const assignedBindStudentIds = new Set<number>();
     bindBlocks.forEach((block, idx) => {
-        // 가장 인원이 적은 반에 블록 배정
         let minIdx = 0;
         let minCount = allocation[0].length;
         for (let c = 1; c < classCount; c++) {
@@ -388,274 +163,545 @@ function createInitialAllocation(students: Student[], classCount: number): Class
         console.log(`   BIND 블록 ${idx + 1} (${block.length}명) → ${minIdx + 1}반`);
     });
 
-    // 3. 나머지 학생을 기존반 기준으로 균등 배정 (인터리빙 방식)
-    // 각 새 반에 기존반별 학생이 균등하게 배정되도록 함
-
-    // 기존반별로 학생 그룹화 (남/여 분리)
-    const sectionMalesMap = new Map<number, Student[]>();
-    const sectionFemalesMap = new Map<number, Student[]>();
-
-    students.forEach(s => {
-        if (assignedBindStudentIds.has(s.id)) return; // BIND 학생은 이미 배정됨
-
-        const section = s.section_number || 0;
-
-        if (s.gender === 'M') {
-            if (!sectionMalesMap.has(section)) {
-                sectionMalesMap.set(section, []);
-            }
-            sectionMalesMap.get(section)!.push(s);
-        } else {
-            if (!sectionFemalesMap.has(section)) {
-                sectionFemalesMap.set(section, []);
-            }
-            sectionFemalesMap.get(section)!.push(s);
-        }
-    });
-
-    // 각 기존반 학생들을 성적순 정렬
-    sectionMalesMap.forEach((males, section) => {
-        males.sort((a, b) => (a.rank || 999) - (b.rank || 999));
-    });
-    sectionFemalesMap.forEach((females, section) => {
-        females.sort((a, b) => (a.rank || 999) - (b.rank || 999));
-    });
-
-    const sectionNumbers = [...new Set([...sectionMalesMap.keys(), ...sectionFemalesMap.keys()])].sort((a, b) => a - b);
+    // 3. 나머지 학생을 기존반별, 성별별로 스네이크 배정
+    const sectionNumbers = [...new Set(students.map(s => s.section_number || 0))].sort((a, b) => a - b);
     console.log(`📋 기존반 수: ${sectionNumbers.length}개`);
 
-    // 인터리빙 배정: 새 반 0→1→2→...→0→1→... 순환하며
-    // 각 기존반에서 남학생 1명씩, 여학생 1명씩 배정
-    // 모든 기존반에서 1명씩 배정 = 1라운드
+    sectionNumbers.forEach(sectionNum => {
+        const sectionStudents = students.filter(s =>
+            s.section_number === sectionNum && !assignedBindStudentIds.has(s.id)
+        );
 
-    let currentNewClass = 0;
+        // 남학생
+        const males = sectionStudents.filter(s => s.gender === 'M').sort((a, b) => (a.rank || 999) - (b.rank || 999));
+        // 여학생 
+        const females = sectionStudents.filter(s => s.gender === 'F').sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
-    // 남학생 인터리빙 배정
-    let hasMoreMales = true;
-    while (hasMoreMales) {
-        hasMoreMales = false;
-        for (const section of sectionNumbers) {
-            const males = sectionMalesMap.get(section) || [];
-            if (males.length > 0) {
-                const student = males.shift()!;
-                allocation[currentNewClass].push(student);
-                currentNewClass = (currentNewClass + 1) % classCount;
-                hasMoreMales = hasMoreMales || males.length > 0;
-            }
-        }
-        // 다음 라운드에서도 체크
-        for (const section of sectionNumbers) {
-            if ((sectionMalesMap.get(section) || []).length > 0) {
-                hasMoreMales = true;
-                break;
-            }
-        }
-    }
+        const startOffset = (sectionNum - 1) % classCount;
 
-    // 여학생 인터리빙 배정 (남학생과 다른 시작점으로 균형 맞춤)
-    currentNewClass = 1 % classCount;
+        // 남학생 스네이크 배정
+        const maleAssignments = snakeDistribute(males, classCount, startOffset);
+        males.forEach((student, i) => {
+            allocation[maleAssignments[i]].push(student);
+        });
 
-    let hasMoreFemales = true;
-    while (hasMoreFemales) {
-        hasMoreFemales = false;
-        for (const section of sectionNumbers) {
-            const females = sectionFemalesMap.get(section) || [];
-            if (females.length > 0) {
-                const student = females.shift()!;
-                allocation[currentNewClass].push(student);
-                currentNewClass = (currentNewClass + 1) % classCount;
-                hasMoreFemales = hasMoreFemales || females.length > 0;
-            }
-        }
-        // 다음 라운드에서도 체크
-        for (const section of sectionNumbers) {
-            if ((sectionFemalesMap.get(section) || []).length > 0) {
-                hasMoreFemales = true;
-                break;
-            }
-        }
-    }
+        // 여학생 스네이크 배정 (시작점 살짝 다르게)
+        const femaleAssignments = snakeDistribute(females, classCount, (startOffset + 1) % classCount);
+        females.forEach((student, i) => {
+            allocation[femaleAssignments[i]].push(student);
+        });
 
-    // 기존반별 배정 통계 출력
-    for (const sectionNum of sectionNumbers) {
-        const distribution: string[] = [];
-        for (let c = 0; c < classCount; c++) {
-            const maleCount = allocation[c].filter(s =>
-                s.section_number === sectionNum && s.gender === 'M' && !assignedBindStudentIds.has(s.id)
-            ).length;
-            const femaleCount = allocation[c].filter(s =>
-                s.section_number === sectionNum && s.gender === 'F' && !assignedBindStudentIds.has(s.id)
-            ).length;
-            distribution.push(`남${maleCount}여${femaleCount}`);
-        }
-        console.log(`   기존 ${sectionNum}반 → 새 반별 배정: [${distribution.join(', ')}]`);
-    }
+        console.log(`   기존 ${sectionNum}반: 남 ${males.length}명, 여 ${females.length}명 배정 완료`);
+    });
 
     return allocation;
 }
 
 // ========================================
-// 시뮬레이티드 어닐링
+// 제약 조건 해결
 // ========================================
 
 /**
- * 이웃 해 생성 (임의로 두 학생을 교환)
- * BIND 그룹 학생은 교환에서 제외하여 분리 방지
+ * 최적 교환 파트너 찾기
  */
-function getNeighbor(allocation: ClassAllocation, classCount: number): ClassAllocation {
-    const newAllocation = JSON.parse(JSON.stringify(allocation)) as ClassAllocation;
+function findSwapPartner(
+    student: Student,
+    sourceClassIdx: number,
+    targetClassIdx: number,
+    allocation: ClassAllocation,
+    sepGroupMap: Map<string, Student[]>,
+    bindGroupMap: Map<string, Student[]>
+): Student | null {
+    const candidates = allocation[targetClassIdx].filter(s => {
+        // 1. 같은 성별만
+        if (s.gender !== student.gender) return false;
 
-    // BIND 학생 ID 수집 (교환에서 제외)
-    const bindStudentIds = new Set<number>();
-    Object.values(newAllocation).forEach((students: Student[]) => {
-        students.forEach((s: Student) => {
-            const { bind } = parseConstraints(s);
-            if (bind.length > 0) {
-                bindStudentIds.add(s.id);
-            }
-        });
+        // 2. BIND 그룹 학생은 제외
+        const { bind } = parseConstraints(s);
+        if (bind.length > 0) return false;
+
+        // 3. SEP 위배하지 않는지 확인
+        const { sep: studentSep } = parseConstraints(student);
+        const { sep: candidateSep } = parseConstraints(s);
+
+        // student가 sourceClass로 이동 시 SEP 위배 확인
+        for (const groupName of candidateSep) {
+            const members = sepGroupMap.get(groupName) || [];
+            const hasViolation = members.some(m =>
+                m.id !== s.id && allocation[sourceClassIdx].some(st => st.id === m.id)
+            );
+            if (hasViolation) return false;
+        }
+
+        // candidate가 targetClass로 이동 시 SEP 위배 확인
+        for (const groupName of studentSep) {
+            const members = sepGroupMap.get(groupName) || [];
+            const hasViolation = members.some(m =>
+                m.id !== student.id && allocation[targetClassIdx].some(st => st.id === m.id)
+            );
+            if (hasViolation) return false;
+        }
+
+        return true;
     });
 
-    // 랜덤하게 두 반 선택
-    const class1 = Math.floor(Math.random() * classCount);
-    let class2 = Math.floor(Math.random() * classCount);
-    while (class2 === class1 && classCount > 1) {
-        class2 = Math.floor(Math.random() * classCount);
-    }
+    if (candidates.length === 0) return null;
 
-    // 교환 가능한 학생만 필터링 (BIND 학생 제외)
-    const swappable1 = newAllocation[class1].filter(s => !bindStudentIds.has(s.id));
-    const swappable2 = newAllocation[class2].filter(s => !bindStudentIds.has(s.id));
+    // 석차 차이 최소화, 같은 기존반 우선
+    candidates.sort((a, b) => {
+        const sameOldSection = (a.section_number === student.section_number ? 0 : 1) -
+            (b.section_number === student.section_number ? 0 : 1);
+        if (sameOldSection !== 0) return sameOldSection;
 
-    if (swappable1.length === 0 || swappable2.length === 0) {
-        return newAllocation;
-    }
+        const rankDiffA = Math.abs((a.rank || 999) - (student.rank || 999));
+        const rankDiffB = Math.abs((b.rank || 999) - (student.rank || 999));
+        return rankDiffA - rankDiffB;
+    });
 
-    // 80% 확률로 같은 성별끼리 교환 (성별 균형 최적화 향상)
-    let student1: Student;
-    let student2: Student;
-
-    if (Math.random() < 0.8) {
-        // 같은 성별끼리 교환 시도
-        const males1 = swappable1.filter(s => s.gender === 'M');
-        const females1 = swappable1.filter(s => s.gender === 'F');
-        const males2 = swappable2.filter(s => s.gender === 'M');
-        const females2 = swappable2.filter(s => s.gender === 'F');
-
-        // 남학생끼리 또는 여학생끼리 교환 가능한지 확인
-        const canSwapMales = males1.length > 0 && males2.length > 0;
-        const canSwapFemales = females1.length > 0 && females2.length > 0;
-
-        if (canSwapMales && canSwapFemales) {
-            // 둘 다 가능하면 랜덤 선택
-            if (Math.random() < 0.5) {
-                student1 = males1[Math.floor(Math.random() * males1.length)];
-                student2 = males2[Math.floor(Math.random() * males2.length)];
-            } else {
-                student1 = females1[Math.floor(Math.random() * females1.length)];
-                student2 = females2[Math.floor(Math.random() * females2.length)];
-            }
-        } else if (canSwapMales) {
-            student1 = males1[Math.floor(Math.random() * males1.length)];
-            student2 = males2[Math.floor(Math.random() * males2.length)];
-        } else if (canSwapFemales) {
-            student1 = females1[Math.floor(Math.random() * females1.length)];
-            student2 = females2[Math.floor(Math.random() * females2.length)];
-        } else {
-            // 같은 성별 교환 불가 → 무작위 교환
-            student1 = swappable1[Math.floor(Math.random() * swappable1.length)];
-            student2 = swappable2[Math.floor(Math.random() * swappable2.length)];
-        }
-    } else {
-        // 20% 확률로 무작위 교환 (다양성 유지)
-        student1 = swappable1[Math.floor(Math.random() * swappable1.length)];
-        student2 = swappable2[Math.floor(Math.random() * swappable2.length)];
-    }
-
-    // 원래 배열에서의 인덱스 찾기
-    const idx1 = newAllocation[class1].findIndex(s => s.id === student1.id);
-    const idx2 = newAllocation[class2].findIndex(s => s.id === student2.id);
-
-    if (idx1 === -1 || idx2 === -1) {
-        return newAllocation;
-    }
-
-    // 교환 실행
-    newAllocation[class1][idx1] = student2;
-    newAllocation[class2][idx2] = student1;
-
-    return newAllocation;
+    return candidates[0];
 }
 
 /**
- * 시뮬레이티드 어닐링 알고리즘
+ * 제약 조건 위배 해결
  */
-function simulatedAnnealing(
-    students: Student[],
+function resolveConstraintViolations(
+    allocation: ClassAllocation,
     classCount: number,
-    sameNames: { exactDuplicates: string[], similarNames: string[] },
-    maxIterations: number = 10000
-): ClassAllocation {
-    let current = createInitialAllocation(students, classCount);
-    let currentCost = calculateCost(current, classCount, sameNames);
-    let best = JSON.parse(JSON.stringify(current));
-    let bestCost = currentCost;
+    sameNames: { exactDuplicates: string[], similarNames: string[] }
+): void {
+    console.log('\n🔧 제약 조건 위배 해결 시작');
 
-    let temperature = 1000;
-    const coolingRate = 0.995;
-    const minTemperature = 0.1;
+    // SEP, BIND 그룹 맵 생성
+    const sepGroupMap = new Map<string, Student[]>();
+    const bindGroupMap = new Map<string, Student[]>();
 
-    console.log(`🔥 시뮬레이티드 어닐링 시작 - 초기 비용: ${currentCost}`);
+    Object.values(allocation).forEach((students: Student[]) => {
+        students.forEach((s: Student) => {
+            const { sep, bind } = parseConstraints(s);
+            sep.forEach(groupName => {
+                if (!sepGroupMap.has(groupName)) sepGroupMap.set(groupName, []);
+                sepGroupMap.get(groupName)!.push(s);
+            });
+            bind.forEach(groupName => {
+                if (!bindGroupMap.has(groupName)) bindGroupMap.set(groupName, []);
+                bindGroupMap.get(groupName)!.push(s);
+            });
+        });
+    });
 
-    for (let i = 0; i < maxIterations && temperature > minTemperature; i++) {
-        const neighbor = getNeighbor(current, classCount);
-        const neighborCost = calculateCost(neighbor, classCount, sameNames);
+    // 1. SEP 위배 해결
+    console.log('  1️⃣ SEP 위배 해결');
+    let sepFixed = 0;
+    for (let c = 0; c < classCount; c++) {
+        const classStudents = allocation[c];
+        const sepGroups = new Map<string, Student[]>();
 
-        const delta = neighborCost - currentCost;
+        classStudents.forEach(s => {
+            const { sep } = parseConstraints(s);
+            sep.forEach(groupName => {
+                if (!sepGroups.has(groupName)) sepGroups.set(groupName, []);
+                sepGroups.get(groupName)!.push(s);
+            });
+        });
 
-        // 더 좋은 해이거나, 확률적으로 나쁜 해도 수용
-        if (delta < 0 || Math.random() < Math.exp(-delta / temperature)) {
-            current = neighbor;
-            currentCost = neighborCost;
+        sepGroups.forEach((members, groupName) => {
+            if (members.length > 1) {
+                // 한 명을 다른 반으로 교환
+                const studentToMove = members[0];
+                for (let targetClass = 0; targetClass < classCount; targetClass++) {
+                    if (targetClass === c) continue;
 
-            // 최적해 갱신
-            if (currentCost < bestCost) {
-                best = JSON.parse(JSON.stringify(current));
-                bestCost = currentCost;
-                console.log(`✨ 새로운 최적해 발견! 비용: ${bestCost} (반복: ${i})`);
+                    const partner = findSwapPartner(studentToMove, c, targetClass, allocation, sepGroupMap, bindGroupMap);
+                    if (partner) {
+                        // 교환 실행
+                        allocation[c] = allocation[c].filter(s => s.id !== studentToMove.id);
+                        allocation[targetClass] = allocation[targetClass].filter(s => s.id !== partner.id);
+                        allocation[c].push(partner);
+                        allocation[targetClass].push(studentToMove);
+                        sepFixed++;
+                        console.log(`     SEP "${groupName}" 해결: ${studentToMove.name} ↔ ${partner.name}`);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+    console.log(`     ✅ ${sepFixed}건 해결`);
+
+    // 2. 특수교육 학생 분리
+    console.log('  2️⃣ 특수교육 학생 분리');
+    let specialFixed = 0;
+    for (let c = 0; c < classCount; c++) {
+        const specialStudents = allocation[c].filter(s => s.is_special_class);
+        if (specialStudents.length > 1) {
+            const studentToMove = specialStudents[0];
+            for (let targetClass = 0; targetClass < classCount; targetClass++) {
+                if (targetClass === c) continue;
+                if (allocation[targetClass].some(s => s.is_special_class)) continue;
+
+                const partner = findSwapPartner(studentToMove, c, targetClass, allocation, sepGroupMap, bindGroupMap);
+                if (partner) {
+                    allocation[c] = allocation[c].filter(s => s.id !== studentToMove.id);
+                    allocation[targetClass] = allocation[targetClass].filter(s => s.id !== partner.id);
+                    allocation[c].push(partner);
+                    allocation[targetClass].push(studentToMove);
+                    specialFixed++;
+                    console.log(`     특수교육 분리: ${studentToMove.name} ↔ ${partner.name}`);
+                    break;
+                }
             }
         }
-
-        // 온도 감소
-        temperature *= coolingRate;
-
-        // 진행 상황 출력
-        if (i % 1000 === 0) {
-            console.log(`🔄 반복 ${i} - 온도: ${temperature.toFixed(2)} - 현재 비용: ${currentCost} - 최적 비용: ${bestCost}`);
-        }
     }
+    console.log(`     ✅ ${specialFixed}건 해결`);
 
-    console.log(`✅ 최종 비용: ${bestCost}`);
-    return best;
+    // 3. 완전 동명이인 분리
+    console.log('  3️⃣ 완전 동명이인 분리');
+    let duplicateFixed = 0;
+    for (let c = 0; c < classCount; c++) {
+        const nameCount = new Map<string, Student[]>();
+        allocation[c].forEach(s => {
+            const name = s.name.trim();
+            if (sameNames.exactDuplicates.includes(name)) {
+                if (!nameCount.has(name)) nameCount.set(name, []);
+                nameCount.get(name)!.push(s);
+            }
+        });
+
+        nameCount.forEach((students, name) => {
+            if (students.length > 1) {
+                const studentToMove = students[0];
+                for (let targetClass = 0; targetClass < classCount; targetClass++) {
+                    if (targetClass === c) continue;
+                    if (allocation[targetClass].some(s => s.name.trim() === name)) continue;
+
+                    const partner = findSwapPartner(studentToMove, c, targetClass, allocation, sepGroupMap, bindGroupMap);
+                    if (partner) {
+                        allocation[c] = allocation[c].filter(s => s.id !== studentToMove.id);
+                        allocation[targetClass] = allocation[targetClass].filter(s => s.id !== partner.id);
+                        allocation[c].push(partner);
+                        allocation[targetClass].push(studentToMove);
+                        duplicateFixed++;
+                        console.log(`     동명이인 분리: ${studentToMove.name} ↔ ${partner.name}`);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+    console.log(`     ✅ ${duplicateFixed}건 해결`);
+
+    // 4. 이름만 같은 학생 분산
+    console.log('  4️⃣ 이름만 같은 학생 분산');
+    let similarFixed = 0;
+    for (let c = 0; c < classCount; c++) {
+        const givenNameCount = new Map<string, Student[]>();
+        allocation[c].forEach(s => {
+            const givenName = extractGivenName(s.name.trim());
+            if (sameNames.similarNames.includes(givenName)) {
+                if (!givenNameCount.has(givenName)) givenNameCount.set(givenName, []);
+                givenNameCount.get(givenName)!.push(s);
+            }
+        });
+
+        givenNameCount.forEach((students, givenName) => {
+            if (students.length > 1) {
+                const studentToMove = students[0];
+                for (let targetClass = 0; targetClass < classCount; targetClass++) {
+                    if (targetClass === c) continue;
+
+                    const targetGivenNames = allocation[targetClass].map(s => extractGivenName(s.name.trim()));
+                    if (targetGivenNames.includes(givenName)) continue;
+
+                    const partner = findSwapPartner(studentToMove, c, targetClass, allocation, sepGroupMap, bindGroupMap);
+                    if (partner) {
+                        allocation[c] = allocation[c].filter(s => s.id !== studentToMove.id);
+                        allocation[targetClass] = allocation[targetClass].filter(s => s.id !== partner.id);
+                        allocation[c].push(partner);
+                        allocation[targetClass].push(studentToMove);
+                        similarFixed++;
+                        console.log(`     이름 분산: ${studentToMove.name} ↔ ${partner.name}`);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+    console.log(`     ✅ ${similarFixed}건 해결`);
+
+    // 5. 문제행동 학생 균등화
+    console.log('  5️⃣ 문제행동 학생 균등화');
+    const allStudents = Object.values(allocation).flat();
+    const totalProblem = allStudents.filter(s => s.is_problem_student).length;
+    const avgProblem = totalProblem / classCount;
+    let problemFixed = 0;
+
+    for (let iter = 0; iter < 10; iter++) {
+        let improved = false;
+        for (let c = 0; c < classCount; c++) {
+            const problemCount = allocation[c].filter(s => s.is_problem_student).length;
+            if (problemCount > Math.ceil(avgProblem)) {
+                const studentToMove = allocation[c].find(s => s.is_problem_student);
+                if (!studentToMove) continue;
+
+                for (let targetClass = 0; targetClass < classCount; targetClass++) {
+                    if (targetClass === c) continue;
+                    const targetProblemCount = allocation[targetClass].filter(s => s.is_problem_student).length;
+                    if (targetProblemCount >= Math.ceil(avgProblem)) continue;
+
+                    const partner = findSwapPartner(studentToMove, c, targetClass, allocation, sepGroupMap, bindGroupMap);
+                    if (partner) {
+                        allocation[c] = allocation[c].filter(s => s.id !== studentToMove.id);
+                        allocation[targetClass] = allocation[targetClass].filter(s => s.id !== partner.id);
+                        allocation[c].push(partner);
+                        allocation[targetClass].push(studentToMove);
+                        problemFixed++;
+                        improved = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!improved) break;
+    }
+    console.log(`     ✅ ${problemFixed}건 조정`);
+
+    // 6. 학습부진 학생 균등화
+    console.log('  6️⃣ 학습부진 학생 균등화');
+    const totalUnder = allStudents.filter(s => s.is_underachiever).length;
+    const avgUnder = totalUnder / classCount;
+    let underFixed = 0;
+
+    for (let iter = 0; iter < 10; iter++) {
+        let improved = false;
+        for (let c = 0; c < classCount; c++) {
+            const underCount = allocation[c].filter(s => s.is_underachiever).length;
+            if (underCount > Math.ceil(avgUnder)) {
+                const studentToMove = allocation[c].find(s => s.is_underachiever);
+                if (!studentToMove) continue;
+
+                for (let targetClass = 0; targetClass < classCount; targetClass++) {
+                    if (targetClass === c) continue;
+                    const targetUnderCount = allocation[targetClass].filter(s => s.is_underachiever).length;
+                    if (targetUnderCount >= Math.ceil(avgUnder)) continue;
+
+                    const partner = findSwapPartner(studentToMove, c, targetClass, allocation, sepGroupMap, bindGroupMap);
+                    if (partner) {
+                        allocation[c] = allocation[c].filter(s => s.id !== studentToMove.id);
+                        allocation[targetClass] = allocation[targetClass].filter(s => s.id !== partner.id);
+                        allocation[c].push(partner);
+                        allocation[targetClass].push(studentToMove);
+                        underFixed++;
+                        improved = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!improved) break;
+    }
+    console.log(`     ✅ ${underFixed}건 조정`);
+
+    console.log('✅ 제약 조건 해결 완료\n');
 }
 
 // ========================================
 // 최종 정리
 // ========================================
 
+
 /**
  * 각 반 학생들을 정렬 (전출예정 학생은 맨 마지막)
  */
 function sortClassStudents(students: Student[]): Student[] {
     return students.sort((a, b) => {
-        // 1순위: 전출예정 학생은 무조건 뒤로
         if (a.is_transferring_out && !b.is_transferring_out) return 1;
         if (!a.is_transferring_out && b.is_transferring_out) return -1;
-
-        // 2순위: 일반 학생끼리는 성적순
         return (a.rank || 999) - (b.rank || 999);
     });
 }
+
+/**
+ * 특수교육 학생이 있는 반의 인원 조정
+ */
+function adjustSpecialClassSize(
+    allocation: ClassAllocation,
+    classCount: number,
+    reductionCount: number,
+    mode: 'force' | 'flexible',
+    sepGroupMap: Map<string, Student[]>,
+    bindGroupMap: Map<string, Student[]>
+): void {
+    if (reductionCount <= 0) return;
+
+    console.log(`\n📚 특수교육 반 인원 조정 (${mode === 'force' ? '강제' : '유연'} 모드, -${reductionCount}명)`);
+
+    // 1. 특수교육 학생이 있는 반 찾기
+    const specialClassIndices: number[] = [];
+    const normalClassIndices: number[] = [];
+
+    for (let c = 0; c < classCount; c++) {
+        const hasSpecial = allocation[c].some(s => s.is_special_class && !s.is_transferring_out);
+        if (hasSpecial) {
+            specialClassIndices.push(c);
+        } else {
+            normalClassIndices.push(c);
+        }
+    }
+
+    if (specialClassIndices.length === 0) {
+        console.log('   특수교육 학생 없음 - 조정 생략');
+        return;
+    }
+
+    console.log(`   특수교육 반: ${specialClassIndices.length}개 (${specialClassIndices.map(i => i + 1).join(', ')}반)`);
+
+    if (mode === 'force') {
+        // 강제 모드: 모든 특수교육 반에서 정확히 reductionCount만큼 감소
+        console.log('   강제 적용: 모든 특수교육 반에서 정확히 감소');
+
+        for (const specialIdx of specialClassIndices) {
+            const movableStudents = allocation[specialIdx].filter(s => {
+                // 이동 가능한 학생: 일반 학생, BIND 없음, 전출예정 아님
+                const { bind } = parseConstraints(s);
+                return !s.is_special_class && !s.is_problem_student && !s.is_underachiever &&
+                    !s.is_transferring_out && bind.length === 0;
+            });
+
+            const toMove = movableStudents.slice(0, reductionCount);
+            let movedCount = 0;
+
+            for (const student of toMove) {
+                // 인원이 가장 적은 일반 반으로 이동
+                let minIdx = normalClassIndices[0];
+                let minCount = allocation[minIdx].filter(s => !s.is_transferring_out).length;
+
+                for (const idx of normalClassIndices) {
+                    const count = allocation[idx].filter(s => !s.is_transferring_out).length;
+                    if (count < minCount) {
+                        minCount = count;
+                        minIdx = idx;
+                    }
+                }
+
+                // SEP 위배 확인
+                const { sep } = parseConstraints(student);
+                let canMove = true;
+                for (const groupName of sep) {
+                    const members = sepGroupMap.get(groupName) || [];
+                    if (members.some(m => m.id !== student.id && allocation[minIdx].some(st => st.id === m.id))) {
+                        canMove = false;
+                        break;
+                    }
+                }
+
+                if (canMove) {
+                    allocation[specialIdx] = allocation[specialIdx].filter(s => s.id !== student.id);
+                    allocation[minIdx].push(student);
+                    movedCount++;
+                }
+            }
+
+            console.log(`   ${specialIdx + 1}반: ${movedCount}명 이동`);
+        }
+    } else {
+        // 유연 모드: 전체 균형 유지 (최대 차이 ≤ 2)
+        console.log('   유연 적용: 전체 균형 유지하며 감소');
+
+        const getCurrentClassSizes = () => {
+            const sizes: number[] = [];
+            for (let c = 0; c < classCount; c++) {
+                sizes.push(allocation[c].filter(s => !s.is_transferring_out).length);
+            }
+            return sizes;
+        };
+
+        // 반복적으로 조정
+        for (let iter = 0; iter < 20; iter++) {
+            const sizes = getCurrentClassSizes();
+            const maxSize = Math.max(...sizes);
+            const minSize = Math.min(...sizes);
+
+            // 균형 체크
+            if (maxSize - minSize <= 2) {
+                const specialSizes = specialClassIndices.map(idx => sizes[idx]);
+                const normalSizes = normalClassIndices.map(idx => sizes[idx]);
+                const avgNormal = normalSizes.length > 0 ? normalSizes.reduce((a, b) => a + b, 0) / normalSizes.length : 0;
+                const avgSpecial = specialSizes.reduce((a, b) => a + b, 0) / specialSizes.length;
+
+                // 특수교육 반이 충분히 작으면 종료
+                if (avgSpecial <= avgNormal - reductionCount * 0.5) {
+                    break;
+                }
+            }
+
+            // 가장 큰 특수교육 반에서 학생 이동
+            let maxSpecialIdx = -1;
+            let maxSpecialSize = 0;
+            for (const idx of specialClassIndices) {
+                if (sizes[idx] > maxSpecialSize) {
+                    maxSpecialSize = sizes[idx];
+                    maxSpecialIdx = idx;
+                }
+            }
+
+            if (maxSpecialIdx === -1) break;
+
+            // 이동 가능한 학생 찾기
+            const movableStudents = allocation[maxSpecialIdx].filter(s => {
+                const { bind } = parseConstraints(s);
+                return !s.is_special_class && !s.is_problem_student && !s.is_underachiever &&
+                    !s.is_transferring_out && bind.length === 0;
+            });
+
+            if (movableStudents.length === 0) break;
+
+            const student = movableStudents[0];
+
+            // 가장 작은 일반 반으로 이동
+            let minNormalIdx = normalClassIndices[0];
+            let minNormalSize = sizes[minNormalIdx];
+            for (const idx of normalClassIndices) {
+                if (sizes[idx] < minNormalSize) {
+                    minNormalSize = sizes[idx];
+                    minNormalIdx = idx;
+                }
+            }
+
+            // 이동 후 균형 체크
+            if (maxSpecialSize - 1 - (minNormalSize + 1) > 2) {
+                // 이동하면 균형이 더 나빠지므로 중단
+                break;
+            }
+
+            // SEP 위배 확인
+            const { sep } = parseConstraints(student);
+            let canMove = true;
+            for (const groupName of sep) {
+                const members = sepGroupMap.get(groupName) || [];
+                if (members.some(m => m.id !== student.id && allocation[minNormalIdx].some(st => st.id === m.id))) {
+                    canMove = false;
+                    break;
+                }
+            }
+
+            if (canMove) {
+                allocation[maxSpecialIdx] = allocation[maxSpecialIdx].filter(s => s.id !== student.id);
+                allocation[minNormalIdx].push(student);
+            } else {
+                break;
+            }
+        }
+
+        // 결과 출력
+        const finalSizes = getCurrentClassSizes();
+        for (const idx of specialClassIndices) {
+            console.log(`   ${idx + 1}반: ${finalSizes[idx]}명`);
+        }
+    }
+
+    console.log('✅ 특수교육 반 인원 조정 완료\n');
+}
+
 
 // ========================================
 // 메인 함수
@@ -665,296 +711,99 @@ export function allocateStudents(
     students: Student[],
     classCount: number,
     options?: {
-        specialReductionCount?: number;  // 특수교육 반 감소 인원
-        specialReductionMode?: 'force' | 'flexible';  // 강제/유연 적용
+        specialReductionCount?: number;
+        specialReductionMode?: 'force' | 'flexible';
     }
 ): AllocationResult {
-    console.log(`\n🚀 반배정 알고리즘 시작`);
+    console.log(`\n🚀 반배정 알고리즘 시작 (스네이크 방식)`);
     console.log(`📊 학생 수: ${students.length}명, 반 수: ${classCount}개`);
 
-    const specialReduction = options?.specialReductionCount || 0;
-    const reductionMode = options?.specialReductionMode || 'flexible';
-    if (specialReduction > 0) {
-        console.log(`📚 특수교육대상 반 인원 감소: ${specialReduction}명 (${reductionMode === 'force' ? '강제' : '유연'} 적용)`);
-    }
-
-    // 0. 전출예정 학생 분리 (배정 알고리즘에서 제외)
+    // 0. 전출예정 학생 분리
     const transferringStudents = students.filter(s => s.is_transferring_out);
     const normalStudents = students.filter(s => !s.is_transferring_out);
 
     console.log(`🚌 전출예정 학생: ${transferringStudents.length}명 (배정에서 제외)`);
     console.log(`👨‍🎓 일반 학생: ${normalStudents.length}명 (배정 대상)`);
 
-    // 1. 동명이인 감지 (일반 학생만)
+    // 1. 동명이인 감지
     const sameNames = detectSameNames(normalStudents);
     console.log(`👥 완전 동명이인: ${sameNames.exactDuplicates.length}개`);
+    console.log(`👥 이름만 같은 학생: ${sameNames.similarNames.length}개`);
 
-    // 2. 시뮬레이티드 어닐링으로 최적 배정 찾기 (일반 학생만)
-    const allocation = simulatedAnnealing(normalStudents, classCount, sameNames);
+    // 2. 스네이크 방식으로 초기 배정
+    const allocation = createSnakeAllocation(normalStudents, classCount);
 
-    // 2-1. 전출예정 학생을 각 반에 균등 배정 (인원수 계산에서 제외되도록 마지막에 추가)
-    console.log(`\n🚌 전출예정 학생 배정 (인원수 제외):`);
+    // 3. 전출예정 학생을 각 반에 균등 배정
+    console.log(`\n🚌 전출예정 학생 배정:`);
     let transferIdx = 0;
     for (const student of transferringStudents) {
-        // 라운드 로빈으로 각 반에 분배
         allocation[transferIdx % classCount].push(student);
         console.log(`   ${student.name} → ${(transferIdx % classCount) + 1}반`);
         transferIdx++;
     }
 
-    // 3. 특수교육대상 학생 있는 반 확인 및 인원 조정
-    const specialClassIndices: number[] = [];
-    for (let c = 0; c < classCount; c++) {
-        const hasSpecial = (allocation[c] || []).some(s => s.is_special_class);
-        if (hasSpecial) {
-            specialClassIndices.push(c);
-        }
+    // 4. 제약 조건 해결
+    resolveConstraintViolations(allocation, classCount, sameNames);
+
+    // 5. 특수교육 반 인원 조정
+    const specialReductionCount = options?.specialReductionCount || 0;
+    const specialReductionMode = options?.specialReductionMode || 'flexible';
+
+    if (specialReductionCount > 0) {
+        console.log(`📚 특수교육 배려 인원: -${specialReductionCount}명 (${specialReductionMode === 'force' ? '강제' : '유연'} 적용)`);
+
+        // SEP, BIND 그룹 맵 생성 (adjustSpecialClassSize에서 필요)
+        const sepGroupMap = new Map<string, Student[]>();
+        const bindGroupMap = new Map<string, Student[]>();
+
+        Object.values(allocation).forEach(students => {
+            students.forEach(s => {
+                const { sep, bind } = parseConstraints(s);
+                sep.forEach(groupName => {
+                    if (!sepGroupMap.has(groupName)) sepGroupMap.set(groupName, []);
+                    sepGroupMap.get(groupName)!.push(s);
+                });
+                bind.forEach(groupName => {
+                    if (!bindGroupMap.has(groupName)) bindGroupMap.set(groupName, []);
+                    bindGroupMap.get(groupName)!.push(s);
+                });
+            });
+        });
+
+        adjustSpecialClassSize(allocation, classCount, specialReductionCount, specialReductionMode, sepGroupMap, bindGroupMap);
     }
 
-    if (specialReduction > 0 && specialClassIndices.length > 0) {
-        console.log(`🎯 특수교육대상 반: ${specialClassIndices.map(i => i + 1).join(', ')}반`);
-
-        // 불균형 기준: 전체 반 중 최대 인원과 최소 인원 차이가 2명 초과시 불균형
-        const IMBALANCE_THRESHOLD = 2;
-
-        // 일반 반 인덱스 목록
-        const normalClassIndices: number[] = [];
-        for (let c = 0; c < classCount; c++) {
-            if (!specialClassIndices.includes(c)) {
-                normalClassIndices.push(c);
-            }
-        }
-
-        // 현재 각 반의 인원수
-        const getCurrentSizes = () => {
-            const sizes: { [key: number]: number } = {};
-            for (let c = 0; c < classCount; c++) {
-                sizes[c] = allocation[c]?.length || 0;
-            }
-            return sizes;
-        };
-
-        // 전체 반 간 균형 확인 (최대 - 최소 <= IMBALANCE_THRESHOLD)
-        const isOverallBalanced = (sizes: { [key: number]: number }) => {
-            const allSizes = Object.values(sizes);
-            const maxSize = Math.max(...allSizes);
-            const minSize = Math.min(...allSizes);
-            return (maxSize - minSize) <= IMBALANCE_THRESHOLD;
-        };
-
-        if (reductionMode === 'force') {
-            // 강제적용: 균형 무시하고 설정된 감소 인원만큼 무조건 이동
-            for (const specialIdx of specialClassIndices) {
-                const movableStudents = (allocation[specialIdx] || [])
-                    .filter(s => {
-                        // BIND 그룹 학생은 이동 불가 (그룹 분리됨)
-                        const { bind } = parseConstraints(s);
-                        return !s.is_special_class && !s.is_problem_student && !s.is_underachiever && !s.is_transferring_out && bind.length === 0;
-                    })
-                    .slice(0, specialReduction);
-
-                let movedCount = 0;
-                for (const student of movableStudents) {
-                    let minIdx = -1;
-                    let minCount = Infinity;
-                    for (let c = 0; c < classCount; c++) {
-                        if (specialClassIndices.includes(c)) continue;
-                        const count = allocation[c]?.length || 0;
-                        if (count < minCount) {
-                            minCount = count;
-                            minIdx = c;
-                        }
-                    }
-                    if (minIdx !== -1) {
-                        allocation[specialIdx] = allocation[specialIdx].filter(s => s !== student);
-                        allocation[minIdx].push(student);
-                        movedCount++;
-                    }
-                }
-                if (movedCount > 0) {
-                    console.log(`   ${specialIdx + 1}반에서 ${movedCount}명 이동 완료 (강제)`);
-                }
-            }
-        } else {
-            // 유연적용: 목표 인원 기반으로 양방향 이동
-            // 목표: 특수교육 반이 일반 반보다 '감소인원'만큼 적되, 전체 반 차이 <= 2
-            console.log(`📊 유연적용 시작: 요청 감소인원 ${specialReduction}명`);
-
-            const initialSizes = getCurrentSizes();
-            const totalStudents = Object.values(initialSizes).reduce((a, b) => a + b, 0);
-            const avgSize = totalStudents / classCount;
-
-            console.log(`   초기 인원: ${Object.entries(initialSizes).map(([idx, size]) => `${parseInt(idx) + 1}반:${size}명`).join(', ')}`);
-            console.log(`   평균 인원: ${avgSize.toFixed(1)}명`);
-
-            // 목표 인원 계산
-            // 특수교육 반: 평균 - (감소인원 비율) / 일반 반: 평균 + (증가인원 비율)
-            // 하지만 유연적용이므로 균형을 최우선으로
-
-            // 반복적으로 균형 맞추기 (최대 인원 반 → 최소 인원 반으로 이동)
-            let iterations = 0;
-            const maxIterations = 100; // 무한루프 방지
-            let totalMoved = 0;
-
-            while (iterations < maxIterations) {
-                iterations++;
-                const currentSizes = getCurrentSizes();
-                const allSizes = Object.values(currentSizes);
-                const currentMax = Math.max(...allSizes);
-                const currentMin = Math.min(...allSizes);
-                const gap = currentMax - currentMin;
-
-                // 이미 균형이면 종료
-                if (gap <= IMBALANCE_THRESHOLD) {
-                    console.log(`   균형 달성: 최대 ${currentMax}명 - 최소 ${currentMin}명 = ${gap}명 차이`);
-                    break;
-                }
-
-                // 최대 인원인 반 찾기
-                let maxIdx = -1;
-                for (let c = 0; c < classCount; c++) {
-                    if (currentSizes[c] === currentMax) {
-                        maxIdx = c;
-                        break;
-                    }
-                }
-
-                // 최소 인원인 반 찾기
-                let minIdx = -1;
-                for (let c = 0; c < classCount; c++) {
-                    if (currentSizes[c] === currentMin) {
-                        minIdx = c;
-                        break;
-                    }
-                }
-
-                if (maxIdx === -1 || minIdx === -1 || maxIdx === minIdx) break;
-
-                // 이동 가능한 학생 찾기 (최대 인원 반에서) - BIND 그룹 학생은 제외
-                const movableStudents = (allocation[maxIdx] || [])
-                    .filter(s => {
-                        const { bind } = parseConstraints(s);
-                        return !s.is_special_class && !s.is_problem_student && !s.is_underachiever && !s.is_transferring_out && bind.length === 0;
-                    });
-
-                if (movableStudents.length === 0) {
-                    console.log(`   ${maxIdx + 1}반에서 이동 가능한 학생 없음`);
-                    break;
-                }
-
-                // 이동 실행
-                const student = movableStudents[0];
-                allocation[maxIdx] = allocation[maxIdx].filter(s => s !== student);
-                allocation[minIdx].push(student);
-                totalMoved++;
-
-                console.log(`   ${maxIdx + 1}반(${currentMax}명) → ${minIdx + 1}반(${currentMin}명) 1명 이동`);
-            }
-
-            // 균형 맞춘 후, 특수교육 반 감소 시도 (여유가 있으면)
-            // 현재 상태에서 특수교육 반이 일반 반보다 크거나 같으면 감소 적용 시도
-            const postBalanceSizes = getCurrentSizes();
-            const specialSizes = specialClassIndices.map(idx => postBalanceSizes[idx]);
-            const normalSizes = normalClassIndices.map(idx => postBalanceSizes[idx]);
-            const specialMax = Math.max(...specialSizes);
-            const normalMin = Math.min(...normalSizes);
-
-            if (specialMax > normalMin && (specialMax - normalMin) > 1) {
-                console.log(`   추가 조정: 특수교육 반(최대 ${specialMax}명)이 일반 반(최소 ${normalMin}명)보다 큼`);
-
-                for (const specialIdx of specialClassIndices) {
-                    const currentSize = postBalanceSizes[specialIdx];
-                    const targetMinNormal = Math.min(...normalClassIndices.map(idx => allocation[idx]?.length || 0));
-
-                    // 특수교육 반이 일반 반 최소보다 크면 1명 이동
-                    if (currentSize > targetMinNormal + 1) {
-                        const movableStudents = (allocation[specialIdx] || [])
-                            .filter(s => {
-                                const { bind } = parseConstraints(s);
-                                return !s.is_special_class && !s.is_problem_student && !s.is_underachiever && !s.is_transferring_out && bind.length === 0;
-                            });
-
-                        if (movableStudents.length > 0) {
-                            // 가장 적은 일반 반 찾기
-                            let minNormalIdx = -1;
-                            let minNormalSize = Infinity;
-                            for (const normalIdx of normalClassIndices) {
-                                const size = allocation[normalIdx]?.length || 0;
-                                if (size < minNormalSize) {
-                                    minNormalSize = size;
-                                    minNormalIdx = normalIdx;
-                                }
-                            }
-
-                            if (minNormalIdx !== -1) {
-                                // 이동 후 균형 확인
-                                const newCurrentMax = Math.max(currentSize - 1, Math.max(...normalClassIndices.map(idx => allocation[idx]?.length || 0)) + (minNormalIdx === normalClassIndices[0] ? 1 : 0));
-                                const newCurrentMin = Math.min(...Object.values(getCurrentSizes())) - 1;
-
-                                // 균형이 깨지지 않으면 이동
-                                const allCurrentSizes = Object.values(getCurrentSizes());
-                                const worstCase = Math.max(...allCurrentSizes) - Math.min(...allCurrentSizes);
-
-                                if (worstCase <= IMBALANCE_THRESHOLD + 1) {
-                                    const student = movableStudents[0];
-                                    allocation[specialIdx] = allocation[specialIdx].filter(s => s !== student);
-                                    allocation[minNormalIdx].push(student);
-                                    totalMoved++;
-                                    console.log(`   ${specialIdx + 1}반 → ${minNormalIdx + 1}반 1명 추가 이동`);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 결과 로그
-            const finalSizes = getCurrentSizes();
-            const finalAllSizes = Object.values(finalSizes);
-            const finalMax = Math.max(...finalAllSizes);
-            const finalMin = Math.min(...finalAllSizes);
-            console.log(`   최종 인원: ${Object.entries(finalSizes).map(([idx, size]) => `${parseInt(idx) + 1}반:${size}명`).join(', ')}`);
-            console.log(`   최종 차이: ${finalMax}명 - ${finalMin}명 = ${finalMax - finalMin}명`);
-            console.log(`   총 ${totalMoved}명 이동 완료`);
-        }
-    }
-
-
-
-
-    // 4. 결과 정리
-    const resultClasses = [];
-
-    for (let c = 0; c < classCount; c++) {
-        const classStudents = sortClassStudents(allocation[c] || []);
-
-        // 통계 계산
-        const stats = {
-            problem: classStudents.filter(s => s.is_problem_student).length,
-            special: classStudents.filter(s => s.is_special_class).length,
-            underachiever: classStudents.filter(s => s.is_underachiever).length,
-            transfer: classStudents.filter(s => s.is_transferring_out).length
-        };
+    // 6. AllocationResult 형식으로 변환
+    const classes: AllocationResult['classes'] = [];
+    for (let i = 0; i < classCount; i++) {
+        const classStudents = sortClassStudents(allocation[i]);
 
         const genderStats = {
             male: classStudents.filter(s => s.gender === 'M').length,
             female: classStudents.filter(s => s.gender === 'F').length
         };
 
-        resultClasses.push({
-            id: c + 1,
+        const specialFactors = {
+            problem: classStudents.filter(s => s.is_problem_student).length,
+            special: classStudents.filter(s => s.is_special_class).length,
+            underachiever: classStudents.filter(s => s.is_underachiever).length,
+            transfer: classStudents.filter(s => s.is_transferring_out).length
+        };
+
+        classes.push({
+            id: i + 1,
             students: classStudents,
-            special_factors: stats,
-            gender_stats: genderStats
+            gender_stats: genderStats,
+            special_factors: specialFactors
         });
 
-        console.log(`\n📌 ${c + 1}반: ${classStudents.filter(s => !s.is_transferring_out).length}명 (전출 제외) / 전체 ${classStudents.length}명`);
-        console.log(`   남: ${genderStats.male}명, 여: ${genderStats.female}명`);
-        console.log(`   특수: ${stats.special}명, 문제: ${stats.problem}명, 부진: ${stats.underachiever}명, 전출: ${stats.transfer}명`);
+        console.log(`${i + 1}반: ${classStudents.length}명 (남${genderStats.male}, 여${genderStats.female})`);
     }
+
+    console.log('\n✅ 반배정 완료!\n');
 
     return {
         classId: 0,
-        classes: resultClasses
+        classes
     };
 }

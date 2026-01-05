@@ -1465,11 +1465,16 @@ export default function StudentsPage() {
                                     }
                                 }}
                                 style={{
-                                    background: confirmAction === 'complete' ? 'var(--success)' : 'var(--danger)',
-                                    color: 'white'
+                                    flex: 1,
+                                    padding: '0.875rem 1.5rem',
+                                    background: confirmAction === 'complete' ? '#10b981' : '#f59e0b',
+                                    color: 'white',
+                                    border: 'none',
+                                    fontWeight: '600',
+                                    fontSize: '1rem'
                                 }}
                             >
-                                {confirmAction === 'complete' ? '확인 (마감)' : '확인 (해지)'}
+                                {confirmAction === 'complete' ? '마감하기' : '해제하기'}
                             </button>
                         </div>
                     </div>

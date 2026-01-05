@@ -1542,9 +1542,14 @@ export default function AllocationPage() {
                                     }}>
                                         <span style={{ fontWeight: 600 }}>{getSectionName(idx)}</span>
                                         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                                            <span style={{ color: '#3b82f6' }}>남 {cls.gender_stats.male}명</span>
-                                            <span style={{ color: '#ec4899' }}>여 {cls.gender_stats.female}명</span>
-                                            <span style={{ fontWeight: 'bold', color: '#6366f1' }}>총 {cls.students.length}명</span>
+                                            <span style={{ color: '#3b82f6' }}>남 {cls.gender_stats.male - cls.students.filter(s => s.gender === 'M' && s.is_transferring_out).length}명</span>
+                                            <span style={{ color: '#ec4899' }}>여 {cls.gender_stats.female - cls.students.filter(s => s.gender === 'F' && s.is_transferring_out).length}명</span>
+                                            <span style={{ fontWeight: 'bold', color: '#6366f1' }}>
+                                                총 {cls.students.filter(s => !s.is_transferring_out).length}명
+                                                {cls.special_factors.transfer > 0 && (
+                                                    <span style={{ fontWeight: 'normal', color: '#94a3b8', fontSize: '0.9em' }}> + 전출예정 {cls.special_factors.transfer}명</span>
+                                                )}
+                                            </span>
                                         </div>
                                     </div>
                                 ))}

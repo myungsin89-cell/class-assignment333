@@ -197,7 +197,7 @@ export default function Dashboard() {
           새로운 반배정 시작하기
         </h2>
         <p style={{ fontSize: '0.95rem', opacity: 0.9, marginBottom: '1rem' }}>
-          학년과 반 수를 입력하여 새로운 학급을 생성하세요
+          현재 학년과 현재 반수를 입력하여 반배정을 시작하세요
         </p>
         <div style={{
           display: 'inline-block',
@@ -208,7 +208,7 @@ export default function Dashboard() {
           fontWeight: 'bold',
           backdropFilter: 'blur(10px)'
         }}>
-          + 학급 생성하기
+          + 반배정 시작
         </div>
       </div>
 
@@ -380,7 +380,7 @@ export default function Dashboard() {
 
             <form onSubmit={handleCreateClass}>
               <div className="form-group">
-                <label htmlFor="grade" className="form-label">학년</label>
+                <label htmlFor="grade" className="form-label">현재 학년</label>
                 <input
                   id="grade"
                   type="number"
@@ -389,13 +389,13 @@ export default function Dashboard() {
                   className="form-input"
                   value={grade}
                   onChange={(e) => setGrade(e.target.value)}
-                  placeholder="학년을 입력하세요 (예: 3)"
+                  placeholder="현재 학년을 입력하세요 (예: 3)"
                   required
                 />
               </div>
 
               <div className="form-group">
-                <label htmlFor="sectionCount" className="form-label">반 수</label>
+                <label htmlFor="sectionCount" className="form-label">현재 학급수</label>
                 <input
                   id="sectionCount"
                   type="number"
@@ -404,7 +404,7 @@ export default function Dashboard() {
                   className="form-input"
                   value={sectionCount}
                   onChange={(e) => setSectionCount(e.target.value)}
-                  placeholder="반 수를 입력하세요 (예: 5)"
+                  placeholder="현재 학급수를 입력하세요 (예: 5)"
                   required
                 />
               </div>

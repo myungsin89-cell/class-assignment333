@@ -340,14 +340,11 @@ function ConditionsPageContent() {
         if (type === 'inner' && section) {
             setInnerSeparationModal({ show: true, section });
         } else {
-            setGroupModal({ show: true, type: 'outer', section });
+            setGroupModal({ show: true, type, section });
         }
     };
 
     const handleDeleteGroup = async (type: 'inner' | 'outer' | 'sameClass', groupId: string) => {
-        const confirmed = await customConfirm('이 그룹을 삭제하시겠습니까?');
-        if (!confirmed) return;
-
         if (type === 'inner') {
             setInnerGroups(innerGroups.filter(g => g.id !== groupId));
         } else if (type === 'outer') {
@@ -356,6 +353,18 @@ function ConditionsPageContent() {
             setSameClassGroups(sameClassGroups.filter(g => g.id !== groupId));
         }
     };
+
+    // 그룹 정보 업데이트
+    const handleUpdateGroup = (type: 'inner' | 'outer' | 'sameClass', groupId: string, updates: Partial<Group>) => {
+        if (type === 'inner') {
+            setInnerGroups(innerGroups.map(g => g.id === groupId ? { ...g, ...updates } : g));
+        } else if (type === 'outer') {
+            setOuterGroups(outerGroups.map(g => g.id === groupId ? { ...g, ...updates } : g));
+        } else {
+            setSameClassGroups(sameClassGroups.map(g => g.id === groupId ? { ...g, ...updates } : g));
+        }
+    };
+
 
     const handleRemoveStudent = (type: 'inner' | 'outer' | 'sameClass', groupId: string, student: Student) => {
         if (type === 'inner') {
@@ -937,6 +946,7 @@ function ConditionsPageContent() {
                                                 color={getGroupColor(idx + 10)}
                                                 onRemoveStudent={(gId: string, s: Student) => handleRemoveStudent('outer', gId, s)}
                                                 onDeleteGroup={() => handleDeleteGroup('outer', group.id)}
+                                                onUpdateGroup={(gId: string, updates: Partial<Group>) => handleUpdateGroup('outer', gId, updates)}
                                                 type="outer"
                                             />
                                         ))
@@ -984,6 +994,7 @@ function ConditionsPageContent() {
                                                 color={getGroupColor(idx + 20)}
                                                 onRemoveStudent={(gId: string, s: Student) => handleRemoveStudent('sameClass', gId, s)}
                                                 onDeleteGroup={() => handleDeleteGroup('sameClass', group.id)}
+                                                onUpdateGroup={(gId: string, updates: Partial<Group>) => handleUpdateGroup('sameClass', gId, updates)}
                                                 type="outer"
                                             />
                                         ))
@@ -1254,6 +1265,100 @@ function ConditionsPageContent() {
                                                 </div>
                                             </label>
                                         </div>
+
+                                        {/* 예상 인원 차이 표시 */}
+                                        {sectionCount > 0 && (() => {
+                                            const specialStudents = allStudents.filter(s => s.is_special_class && !s.is_transferring_out);
+                                            const normalStudentsCount = allStudents.filter(s => !s.is_transferring_out).length;
+
+                                            if (specialStudents.length === 0) {
+                                                return (
+                                                    <div style={{
+                                                        marginTop: '0.75rem',
+                                                        padding: '0.75rem',
+                                                        background: 'rgba(148, 163, 184, 0.1)',
+                                                        borderRadius: '6px',
+                                                        fontSize: '0.85rem',
+                                                        color: 'var(--text-secondary)'
+                                                    }}>
+                                                        ℹ️ 특수교육 학생이 없어 인원 조정이 적용되지 않습니다.
+                                                    </div>
+                                                );
+                                            }
+
+                                            const specialClassCount = specialStudents.length;
+                                            const normalClassCount = sectionCount - specialClassCount;
+                                            const avgSize = Math.floor(normalStudentsCount / sectionCount);
+
+                                            let flexibleDiff, forceDiff;
+
+                                            if (normalClassCount > 0) {
+                                                // 유연 적용: 균형 유지 (최대 차이 ≤ 2)
+                                                const specialSize = Math.max(avgSize - 1, avgSize - specialReductionCount);
+                                                const normalSize = avgSize + Math.floor((specialClassCount * specialReductionCount) / normalClassCount);
+                                                flexibleDiff = Math.abs(normalSize - specialSize);
+
+                                                // 강제 적용: 정확히 감소
+                                                const forceSpecialSize = avgSize - specialReductionCount;
+                                                const forceNormalSize = avgSize + Math.floor((specialClassCount * specialReductionCount) / normalClassCount);
+                                                forceDiff = Math.abs(forceNormalSize - forceSpecialSize);
+                                            } else {
+                                                // 모든 반이 특수교육 반인 경우
+                                                flexibleDiff = 0;
+                                                forceDiff = 0;
+                                            }
+
+                                            return (
+                                                <div style={{ marginTop: '0.75rem' }}>
+                                                    <div style={{
+                                                        fontSize: '0.85rem',
+                                                        fontWeight: 600,
+                                                        marginBottom: '0.5rem',
+                                                        color: 'var(--text-primary)'
+                                                    }}>
+                                                        📊 예상 결과
+                                                    </div>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                                        <div style={{
+                                                            padding: '0.6rem 0.75rem',
+                                                            background: specialReductionMode === 'flexible' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                                                            border: specialReductionMode === 'flexible' ? '1.5px solid #10b981' : '1px solid var(--border)',
+                                                            borderRadius: '6px',
+                                                            fontSize: '0.8rem'
+                                                        }}>
+                                                            <div style={{ fontWeight: 600, marginBottom: '0.25rem', color: '#10b981' }}>
+                                                                ✅ 유연 적용
+                                                            </div>
+                                                            <div style={{ color: 'var(--text-secondary)' }}>
+                                                                인원 차이: 최대 {flexibleDiff}명 (균형 유지)
+                                                            </div>
+                                                        </div>
+                                                        <div style={{
+                                                            padding: '0.6rem 0.75rem',
+                                                            background: specialReductionMode === 'force' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+                                                            border: specialReductionMode === 'force' ? '1.5px solid #ef4444' : '1px solid var(--border)',
+                                                            borderRadius: '6px',
+                                                            fontSize: '0.8rem'
+                                                        }}>
+                                                            <div style={{ fontWeight: 600, marginBottom: '0.25rem', color: '#ef4444' }}>
+                                                                ⚠️ 강제 적용
+                                                            </div>
+                                                            <div style={{ color: 'var(--text-secondary)' }}>
+                                                                인원 차이: 최대 {forceDiff}명 (정확히 -{specialReductionCount}명)
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        marginTop: '0.5rem',
+                                                        fontSize: '0.75rem',
+                                                        color: 'var(--text-muted)',
+                                                        fontStyle: 'italic'
+                                                    }}>
+                                                        * 특수교육 학생 {specialClassCount}명 → {specialClassCount}개 반
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 )}
                             </div>
@@ -2034,11 +2139,30 @@ function InnerSeparationModal({ section, allStudents, innerGroups, onClose, onSa
 
 // ---- Sub Components ----
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function GroupItem({ group, color, onRemoveStudent, onDeleteGroup, type }: any) {
+function GroupItem({ group, color, onRemoveStudent, onDeleteGroup, onUpdateGroup, type }: any) {
+    const [isEditingName, setIsEditingName] = useState(false);
+    const [editedName, setEditedName] = useState(group.name);
+
     const { setNodeRef } = useDroppable({
         id: group.id,
         data: { groupId: group.id, type }
     });
+
+    const handleNameSave = () => {
+        if (editedName.trim() && editedName !== group.name) {
+            onUpdateGroup?.(group.id, { name: editedName.trim() });
+        }
+        setIsEditingName(false);
+    };
+
+    const handleNameKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            handleNameSave();
+        } else if (e.key === 'Escape') {
+            setEditedName(group.name);
+            setIsEditingName(false);
+        }
+    };
 
     return (
         <div ref={setNodeRef} style={{
@@ -2053,22 +2177,54 @@ function GroupItem({ group, color, onRemoveStudent, onDeleteGroup, type }: any) 
                 borderBottom: `2px solid ${color}`,
                 display: 'flex',
                 justifyContent: 'space-between',
-                alignItems: 'center'
+                alignItems: 'center',
+                gap: '0.5rem'
             }}>
-                <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.9rem' }}>
-                    {group.name}
-                    <span style={{ fontSize: '0.8rem', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: '0.4rem' }}>
-                        ({group.students.length}명)
+                {isEditingName ? (
+                    <input
+                        type="text"
+                        value={editedName}
+                        onChange={(e) => setEditedName(e.target.value)}
+                        onBlur={handleNameSave}
+                        onKeyDown={handleNameKeyDown}
+                        autoFocus
+                        style={{
+                            flex: 1,
+                            padding: '0.3rem 0.5rem',
+                            fontSize: '0.9rem',
+                            fontWeight: 700,
+                            border: '2px solid ' + color,
+                            borderRadius: '4px',
+                            background: 'white'
+                        }}
+                    />
+                ) : (
+                    <span
+                        style={{
+                            fontWeight: 700,
+                            color: 'var(--text-primary)',
+                            fontSize: '0.9rem',
+                            cursor: 'pointer',
+                            flex: 1
+                        }}
+                        onClick={() => setIsEditingName(true)}
+                        title="클릭하여 수정"
+                    >
+                        {group.name}
+                        <span style={{ fontSize: '0.8rem', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: '0.4rem' }}>
+                            ({group.students.length}명)
+                        </span>
                     </span>
-                </span>
+                )}
                 <button
                     onClick={onDeleteGroup}
-                    style={{ border: 'none', background: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.2rem' }}
+                    style={{ border: 'none', background: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.2rem' }}
+                    title="그룹 삭제"
                 >×</button>
             </div>
             <div style={{ padding: '0.8rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', minHeight: '60px', alignContent: 'start' }}>
                 {group.students.length === 0 ? (
-                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>드래그하세요</span>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>학생을 드래그하여 추가하세요</span>
                 ) : (
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     group.students.map((s: any, idx: number) => (
@@ -2087,6 +2243,7 @@ function GroupItem({ group, color, onRemoveStudent, onDeleteGroup, type }: any) 
                             <button
                                 onClick={() => onRemoveStudent(group.id, s)}
                                 style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#ef4444', fontWeight: 'bold', padding: 0 }}
+                                title="학생 제거"
                             >×</button>
                         </div>
                     ))
