@@ -43,30 +43,57 @@ export default function RankModal({ students, onClose, onSave }: RankModalProps)
     );
 
     useEffect(() => {
-        // 남/여학생 분리
-        const males = students.filter(s => s.gender === 'M');
-        const females = students.filter(s => s.gender === 'F');
+        const processGender = (gender: 'M' | 'F') => {
+            const group = students.filter(s => s.gender === gender);
+            const count = group.length;
 
-        // 석차 슬롯 초기화
-        const maleCount = males.length;
-        const femaleCount = females.length;
+            // 전출 학생과 일반 학생 분리
+            const transferring = group.filter(s => s.is_transferring_out);
+            const normal = group.filter(s => !s.is_transferring_out);
 
-        const initialMaleSlots: RankSlot[] = Array.from({ length: maleCount }, (_, i) => ({
-            rank: i + 1,
-            student: males.find(s => s.rank === i + 1) || null,
-        }));
+            const slots: RankSlot[] = Array.from({ length: count }, (_, i) => ({
+                rank: i + 1,
+                student: null,
+            }));
 
-        const initialFemaleSlots: RankSlot[] = Array.from({ length: femaleCount }, (_, i) => ({
-            rank: i + 1,
-            student: females.find(s => s.rank === i + 1) || null,
-        }));
+            // 1. 전출 학생은 무조건 맨 뒤부터 배치
+            // 전출 학생들 사이의 순서는 (기존 석차 -> 이름) 순으로 유지
+            const sortedTransferring = [...transferring].sort((a, b) => {
+                const rankA = a.rank ?? 9999;
+                const rankB = b.rank ?? 9999;
+                if (rankA !== rankB) return rankA - rankB;
+                return a.name.localeCompare(b.name);
+            });
 
-        setMaleSlots(initialMaleSlots);
-        setFemaleSlots(initialFemaleSlots);
+            sortedTransferring.forEach((s, i) => {
+                const targetRank = count - sortedTransferring.length + i + 1;
+                if (targetRank > 0 && targetRank <= count) {
+                    slots[targetRank - 1].student = s;
+                }
+            });
 
-        // 미지정 학생
-        setUnassignedMales(males.filter(s => !s.rank));
-        setUnassignedFemales(females.filter(s => !s.rank));
+            // 2. 일반 학생 중 기존 석차가 있는 학생 배치 (전출 학생 자리가 아니면)
+            normal.forEach(s => {
+                if (s.rank && s.rank <= count && slots[s.rank - 1].student === null) {
+                    slots[s.rank - 1].student = s;
+                }
+            });
+
+            // 3. 나머지는 미지정 (전출 아니면서 석차 없는 학생 + 석차 충돌난 일반 학생)
+            const unassigned = group.filter(s => {
+                return !slots.some(slot => slot.student?.name === s.name);
+            });
+
+            return { slots, unassigned };
+        };
+
+        const maleData = processGender('M');
+        const femaleData = processGender('F');
+
+        setMaleSlots(maleData.slots);
+        setUnassignedMales(maleData.unassigned);
+        setFemaleSlots(femaleData.slots);
+        setUnassignedFemales(femaleData.unassigned);
     }, [students]);
 
     const handleDragStart = (event: DragStartEvent) => {

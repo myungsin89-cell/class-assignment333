@@ -183,6 +183,7 @@ export default function StudentsPage() {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 setStudents(data.map((s: any) => ({
                     id: s.id,
+                    student_number: s.student_number || null,
                     name: s.name,
                     gender: s.gender,
                     birth_date: s.birth_date || '',
@@ -772,7 +773,7 @@ export default function StudentsPage() {
 
     return (
         <div style={{ minHeight: '100vh', paddingBottom: '4rem' }}>
-            <div className="container">
+            <div className="container" style={{ maxWidth: '1600px', width: '98%', padding: '1.5rem 1rem' }}>
                 {/* 헤더 */}
                 <div style={{
                     display: 'flex',
@@ -997,25 +998,25 @@ export default function StudentsPage() {
                             </div>
                         </div>
                     )}
-                    <table>
+                    <table style={{ tableLayout: 'fixed', width: '100%' }}>
                         <thead>
                             <tr>
-                                <th style={{ width: '40px', textAlign: 'center', whiteSpace: 'nowrap' }}>번호</th>
+                                <th style={{ width: '60px', textAlign: 'center', whiteSpace: 'nowrap' }}>번호</th>
                                 {!!classData?.is_distributed && (
-                                    <th style={{ width: '50px', textAlign: 'center', whiteSpace: 'nowrap' }}>이전반</th>
+                                    <th style={{ width: '60px', textAlign: 'center', whiteSpace: 'nowrap' }}>이전반</th>
                                 )}
-                                <th style={{ width: '75px', textAlign: 'center', whiteSpace: 'nowrap' }}>성명</th>
-                                <th style={{ width: '45px', textAlign: 'center', whiteSpace: 'nowrap' }}>성별</th>
-                                <th style={{ width: '80px', textAlign: 'center', whiteSpace: 'nowrap' }}>생년월일</th>
-                                <th style={{ width: '180px', textAlign: 'center', whiteSpace: 'nowrap' }}>특이사항</th>
-                                <th style={{ width: '130px', textAlign: 'center', whiteSpace: 'nowrap' }}>연락처</th>
-                                <th style={{ width: '70px', textAlign: 'center', borderLeft: '2px solid var(--border)', whiteSpace: 'nowrap' }}>석차</th>
-                                <th style={{ width: '50px', textAlign: 'center', whiteSpace: 'nowrap' }}>문제행동</th>
-                                <th style={{ width: '50px', textAlign: 'center', whiteSpace: 'nowrap' }}>특수교육</th>
-                                <th style={{ width: '50px', textAlign: 'center', whiteSpace: 'nowrap' }}>학습부진</th>
-                                <th style={{ width: '40px', textAlign: 'center', whiteSpace: 'nowrap' }}>전출</th>
-                                <th style={{ width: '50px', textAlign: 'center', whiteSpace: 'nowrap' }}>분리</th>
-                                <th style={{ width: '30px', textAlign: 'center' }}></th>
+                                <th style={{ width: '140px', textAlign: 'center', whiteSpace: 'nowrap' }}>성명</th>
+                                <th style={{ width: '60px', textAlign: 'center', whiteSpace: 'nowrap' }}>성별</th>
+                                <th style={{ width: '120px', textAlign: 'center', whiteSpace: 'nowrap' }}>생년월일</th>
+                                <th style={{ width: '250px', textAlign: 'center', whiteSpace: 'nowrap' }}>특이사항</th>
+                                <th style={{ width: '180px', textAlign: 'center', whiteSpace: 'nowrap' }}>연락처</th>
+                                <th style={{ width: '80px', textAlign: 'center', borderLeft: '2px solid var(--border)', whiteSpace: 'nowrap' }}>석차</th>
+                                <th style={{ width: '100px', textAlign: 'center', whiteSpace: 'nowrap' }}>문제행동</th>
+                                <th style={{ width: '100px', textAlign: 'center', whiteSpace: 'nowrap' }}>특수교육</th>
+                                <th style={{ width: '100px', textAlign: 'center', whiteSpace: 'nowrap' }}>학습부진</th>
+                                <th style={{ width: '100px', textAlign: 'center', whiteSpace: 'nowrap' }}>전출</th>
+                                <th style={{ width: '160px', textAlign: 'center', whiteSpace: 'nowrap' }}>분리</th>
+                                <th style={{ width: '50px', textAlign: 'center' }}></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1063,7 +1064,7 @@ export default function StudentsPage() {
                                             disabled={isCompleted}
                                             placeholder="이름"
                                             title="학생 성명"
-                                            style={{ margin: 0, padding: '0.25rem', border: 'none', background: 'transparent' }}
+                                            style={{ margin: 0, padding: '0.25rem', border: 'none', background: 'transparent', width: '100%', textAlign: 'center' }}
                                             onFocus={(e) => e.target.style.borderBottom = '1px solid var(--primary)'}
                                             onBlur={(e) => e.target.style.borderBottom = '1px solid transparent'}
                                         />
@@ -1093,7 +1094,7 @@ export default function StudentsPage() {
                                             placeholder="YYMMDD"
                                             disabled={isCompleted}
                                             title="생년월일 (예: 120510)"
-                                            style={{ margin: 0, padding: '0.25rem', border: 'none', background: 'transparent', fontSize: '0.9rem' }}
+                                            style={{ margin: 0, padding: '0.25rem', border: 'none', background: 'transparent', fontSize: '0.9rem', width: '100%', textAlign: 'center' }}
                                         />
                                     </td>
                                     <td>
@@ -1113,6 +1114,7 @@ export default function StudentsPage() {
                                                 background: 'transparent',
                                                 fontSize: '0.9rem',
                                                 width: '100%',
+                                                textAlign: 'center',
                                                 textOverflow: 'ellipsis',
                                                 overflow: 'hidden',
                                                 whiteSpace: 'nowrap'
@@ -1129,7 +1131,7 @@ export default function StudentsPage() {
                                             placeholder="-"
                                             disabled={isCompleted}
                                             title="연락처"
-                                            style={{ margin: 0, padding: '0.25rem', border: 'none', background: 'transparent', fontSize: '0.9rem' }}
+                                            style={{ margin: 0, padding: '0.25rem', border: 'none', background: 'transparent', fontSize: '0.9rem', width: '100%', textAlign: 'center' }}
                                         />
                                     </td>
 
@@ -1376,7 +1378,11 @@ export default function StudentsPage() {
                                     style={{
                                         background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                                         color: 'white',
-                                        border: 'none'
+                                        border: 'none',
+                                        textAlign: 'center',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
                                     }}
                                 >
                                     반편성 시작
@@ -1497,6 +1503,7 @@ export default function StudentsPage() {
                             <button
                                 className="btn btn-secondary"
                                 onClick={() => setShowConfirmModal(false)}
+                                style={{ flex: 1, textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                             >
                                 취소
                             </button>
@@ -1566,7 +1573,11 @@ export default function StudentsPage() {
                                     color: 'white',
                                     border: 'none',
                                     fontWeight: '600',
-                                    fontSize: '1rem'
+                                    fontSize: '1rem',
+                                    textAlign: 'center',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
                                 }}
                             >
                                 {confirmAction === 'complete' ? '마감하기' : '해제하기'}
@@ -1611,7 +1622,7 @@ export default function StudentsPage() {
                         <button
                             className="btn btn-primary"
                             onClick={() => setShowTempSaveModal(false)}
-                            style={{ minWidth: '120px', display: 'block', margin: '0 auto' }}
+                            style={{ minWidth: '120px', display: 'flex', margin: '0 auto', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}
                         >
                             확인
                         </button>

@@ -15,6 +15,7 @@ const sql = globalForSql.sql || (DATABASE_URL
     idle_timeout: 10,  // 유휴 연결 타임아웃 (초) - 더 빠르게 해제
     connect_timeout: 10,  // 연결 타임아웃 (초)
     prepare: false,  // prepared statement 비활성화로 연결 문제 방지
+    ssl: 'require',  // Supabase requires SSL
   })
   : postgres('postgresql://dummy:dummy@localhost:5432/dummy'));
 

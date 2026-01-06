@@ -31,9 +31,23 @@ export interface ClassData {
     section_statuses?: string;
     new_section_count?: number;
     section_names?: string;
+    new_section_names?: string; // 새로 설정된 반 이름들
     special_student_reduction?: number; // 특수교육 학생 반 정원 감축 인원 (0, 1, 2, 3 등) - deprecated
     special_reduction_count?: number; // 특수교육대상 반 인원 감소 수
     special_reduction_mode?: 'force' | 'flexible'; // 강제/유연 적용 모드
+}
+
+export interface AllocationReport {
+    success: boolean;
+    warnings: string[];
+    errors: string[];
+    statistics: {
+        totalStudents: number;
+        classCount: number;
+        genderBalance: { classId: number; male: number; female: number; deviation: number }[];
+        prevClassDistribution: { prevClass: number; distribution: { newClass: number; count: number }[] }[];
+        constraintViolations: { type: string; description: string }[];
+    };
 }
 
 export interface AllocationResult {
@@ -52,4 +66,5 @@ export interface AllocationResult {
             female: number;
         };
     }[];
+    report?: AllocationReport;
 }

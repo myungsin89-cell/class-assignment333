@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Student, ClassData, AllocationResult } from '../../../../lib/types';
 import { allocateStudents } from '../../../../lib/algorithm';
 import StepCard from '../../../components/StepCard';
 import Toast, { ToastType } from '../../../components/Toast';
 import ConfirmModal from '../../../components/ConfirmModal';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 
 // 제약조건 파싱 함수
 function parseConstraints(student: Student) {
@@ -191,6 +191,8 @@ export default function AllocationPage() {
     const [showBindModal, setShowBindModal] = useState(false);
     const [showSpecialModal, setShowSpecialModal] = useState(false);
     const [showDuplicateNamesModal, setShowDuplicateNamesModal] = useState(false);
+    const [showGenderRatioModal, setShowGenderRatioModal] = useState(false);
+    const [showDistributionMatrixModal, setShowDistributionMatrixModal] = useState(false);
     const [showWorkCompleteModal, setShowWorkCompleteModal] = useState(false);
     const [isSaving, setIsSaving] = useState(false); // 저장 로딩 상태
 
@@ -199,6 +201,18 @@ export default function AllocationPage() {
 
     // 다운로드 드롭다운 상태
     const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+
+    // 모달 열릴 때 배경 스크롤 방지
+    useEffect(() => {
+        if (showGenderRatioModal) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = 'unset';
+        }
+        return () => {
+            document.body.style.overflow = 'unset';
+        };
+    }, [showGenderRatioModal]);
 
     // 데이터 로드
     useEffect(() => {
@@ -310,7 +324,7 @@ export default function AllocationPage() {
                         .then(res => {
                             if (res.ok) {
                                 console.log('💾 배정 자동 저장 완료');
-                                setIsSavedAllocation(true);
+                                // setIsSavedAllocation(true); // 제거: 명시적 저장 시에만 활성화
                             }
                         })
                         .catch(err => console.error('Auto-save failed:', err));
@@ -406,13 +420,224 @@ export default function AllocationPage() {
         return { sepViolations, bindViolations };
     }, [allocation, sepGroupMap, bindGroupMap]);
 
+    // 전체 위반 사항 통합 (체크리스트용)
+    const allViolations = useMemo(() => {
+        if (!allocation) return [];
+
+        const violations: Array<{
+            id: string;
+            type: 'sep' | 'bind' | 'duplicate' | 'similar';
+            message: string;
+            studentIds: number[];
+            studentNames: string[];
+        }> = [];
+
+        // 1. SEP 위반
+        constraintViolations.sepViolations.forEach((v, i) => {
+            // 메시지에서 학생 이름 추출 시도 (간단하게)
+            const namesMatch = v.match(/:\s*(.+)\s*이\(가\)/);
+            const studentNames = namesMatch ? namesMatch[1].split(',').map(n => n.trim()) : [];
+            const studentIds = allStudents.filter(s => studentNames.includes(s.name)).map(s => s.id);
+
+            violations.push({
+                id: `sep-${i}`,
+                type: 'sep',
+                message: v,
+                studentIds,
+                studentNames
+            });
+        });
+
+        // 2. BIND 위반
+        constraintViolations.bindViolations.forEach((v, i) => {
+            const namesMatch = v.match(/:\s*(.+)\s*이\(가\)/);
+            const studentNames = namesMatch ? namesMatch[1].split(',').map(n => n.trim()) : [];
+            const studentIds = allStudents.filter(s => studentNames.includes(s.name)).map(s => s.id);
+
+            violations.push({
+                id: `bind-${i}`,
+                type: 'bind',
+                message: v,
+                studentIds,
+                studentNames
+            });
+        });
+
+        // 3. 완전 동명이인 갈등
+        duplicateAnalysis.fullDuplicates.filter(d => d.hasSameSectionConflict).forEach((d, i) => {
+            const sections = d.students.map(s => getSectionName(allocation.classes.findIndex(c => c.id === s.sectionId)));
+            const conflictingSection = sections.find((s, idx, arr) => arr.indexOf(s) !== idx);
+
+            violations.push({
+                id: `dup-${i}`,
+                type: 'duplicate',
+                message: `동명이인 "${d.name}": 같은 반(${conflictingSection})에 배정되었습니다.`,
+                studentIds: d.students.map(s => s.id),
+                studentNames: d.students.map(s => s.name)
+            });
+        });
+
+        // 4. 이름 유사성 (이름만 같은 학생) 갈등
+        duplicateAnalysis.givenNameDuplicates.filter(d => d.hasSameSectionConflict).forEach((d, i) => {
+            // 어느 반에서 겹치는지 찾기
+            const sectionCounts = new Map<number, number>();
+            d.students.forEach(s => {
+                sectionCounts.set(s.sectionId, (sectionCounts.get(s.sectionId) || 0) + 1);
+            });
+
+            sectionCounts.forEach((count, sectionId) => {
+                if (count > 1) {
+                    const sectionName = getSectionName(allocation.classes.findIndex(c => c.id === sectionId));
+                    const conflictingStudents = d.students.filter(s => s.sectionId === sectionId);
+                    violations.push({
+                        id: `sim-${i}-${sectionId}`,
+                        type: 'similar',
+                        message: `이름 유사성 "${d.givenName}": ${conflictingStudents.map(s => s.name).join(', ')}이(가) ${sectionName}에 함께 배정됨`,
+                        studentIds: conflictingStudents.map(s => s.id),
+                        studentNames: conflictingStudents.map(s => s.name)
+                    });
+                }
+            });
+        });
+
+        // 5. 반별 인원 불균형 (특수학생 가중치 반영 V7.1)
+        const v71Weight = 2.0; // 알고리즘 명세 V7.1 기준
+        const weightedClassSizes = allocation.classes.map((c, i) => {
+            const actualCount = c.students.filter(s => !s.is_transferring_out).length;
+            const specialCount = c.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
+            return {
+                idx: i,
+                name: getSectionName(i),
+                actualCount,
+                weightedCount: actualCount + (specialCount * (v71Weight - 1)),
+                specialCount
+            };
+        });
+
+        const sortedByWeighted = [...weightedClassSizes].sort((a, b) => b.weightedCount - a.weightedCount);
+        const maxW = sortedByWeighted[0];
+        const minW = sortedByWeighted[sortedByWeighted.length - 1];
+
+        // 가중치 적용 인원 차이가 1명보다 클 때(2명 이상)만 경고
+        if (maxW.weightedCount - minW.weightedCount > 1) {
+            const diff = maxW.weightedCount - minW.weightedCount;
+            const message = `인원 쏠림: ${maxW.name}과 ${minW.name}의 가중치 편차가 ${diff}명입니다. (특수학생 2.0 가중치 반영)`;
+
+            violations.push({
+                id: 'imbalance-size-weighted',
+                type: 'imbalance' as any,
+                message: message,
+                studentIds: allocation.classes[maxW.idx].students.map(s => s.id),
+                studentNames: []
+            });
+        }
+
+        // 6. 성비 불균형
+        allocation.classes.forEach((c, i) => {
+            const male = c.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
+            const female = c.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
+            if (Math.abs(male - female) > 4) { // 한 반 내부의 성비 편차가 큰 경우
+                violations.push({
+                    id: `imbalance-gender-inner-${i}`,
+                    type: 'imbalance' as any,
+                    message: `성비 불균형: ${getSectionName(i)}에 ${male > female ? '남학생' : '여학생'}이 과다 배정됨 (${male} vs ${female})`,
+                    studentIds: c.students.filter(s => s.gender === (male > female ? 'M' : 'F')).map(s => s.id),
+                    studentNames: []
+                });
+            }
+        });
+
+        // 7. 특별관리대상 불균형
+        const specialImbalance = allocation.classes.map((c, i) => ({
+            name: getSectionName(i),
+            count: c.students.filter(s => (s.is_special_class || s.is_problem_student || s.is_underachiever) && !s.is_transferring_out).length,
+            ids: c.students.filter(s => (s.is_special_class || s.is_problem_student || s.is_underachiever) && !s.is_transferring_out).map(s => s.id)
+        }));
+        const maxSpecial = [...specialImbalance].sort((a, b) => b.count - a.count)[0];
+        const minSpecial = [...specialImbalance].sort((a, b) => a.count - b.count)[0];
+
+        if (maxSpecial.count - minSpecial.count > 1) {
+            violations.push({
+                id: 'imbalance-special',
+                type: 'imbalance' as any,
+                message: `특별학생 쏠림: ${maxSpecial.name}(${maxSpecial.count}명)에 집중됨 (최소 ${minSpecial.count}명인 반과 큰 차이)`,
+                studentIds: maxSpecial.ids,
+                studentNames: []
+            });
+        }
+
+        // 8. 평균 석차 불균형
+        const rankStats = allocation.classes.map((c, i) => {
+            const ranks = c.students.filter(s => s.rank && !s.is_transferring_out).map(s => s.rank!);
+            return {
+                name: getSectionName(i),
+                avg: ranks.length > 0 ? ranks.reduce((a, b) => a + b, 0) / ranks.length : 0,
+                ids: c.students.filter(s => s.rank && !s.is_transferring_out).map(s => s.id)
+            };
+        }).filter(s => s.avg > 0);
+
+        const sortedRanks = [...rankStats].sort((a, b) => b.avg - a.avg);
+        if (sortedRanks.length > 1) {
+            const highRank = sortedRanks[0];
+            const lowRank = sortedRanks[sortedRanks.length - 1];
+            if (highRank.avg - lowRank.avg > 5.0) {
+                violations.push({
+                    id: 'imbalance-rank',
+                    type: 'imbalance' as any,
+                    message: `성적 불균형: ${highRank.name}(평균 ${highRank.avg.toFixed(1)}등) vs ${lowRank.name}(평균 ${lowRank.avg.toFixed(1)}등)`,
+                    studentIds: highRank.ids,
+                    studentNames: []
+                });
+            }
+        }
+
+        // 9. 기존 반 배정 불균형 (사용자 요청 반영: 더욱 상세하게)
+        const prevClasses = Array.from(new Set(allStudents.map(s => s.section_number || 1))).sort((a, b) => {
+            const numA = parseInt(String(a));
+            const numB = parseInt(String(b));
+            return numA - numB;
+        });
+
+        prevClasses.forEach(prevNum => {
+            const studentsFromPrev = allStudents.filter(s => (s.section_number || 1) === prevNum && !s.is_transferring_out);
+            const dist = new Map<number, number>();
+            studentsFromPrev.forEach(s => {
+                const nIdx = allocation.classes.findIndex(c => c.students.some(st => st.id === s.id));
+                if (nIdx !== -1) dist.set(nIdx, (dist.get(nIdx) || 0) + 1);
+            });
+
+            const counts = Array.from(dist.values());
+            if (counts.length > 0) {
+                const maxC = Math.max(...counts);
+                const minC = dist.size < allocation.classes.length ? 0 : Math.min(...counts);
+
+                // 쏠림 기준: 최대 인원과 최소 인원의 차이가 3명 이상일 때
+                if (maxC - minC >= 3) {
+                    const avg = studentsFromPrev.length / allocation.classes.length;
+                    const maxSName = getSectionName(Array.from(dist.entries()).find(([_, c]) => c === maxC)?.[0] ?? 0);
+                    const minSName = getSectionName(Array.from({ length: allocation.classes.length }, (_, i) => i).find(idx => (dist.get(idx) || 0) === minC) ?? 0);
+
+                    violations.push({
+                        id: `imbalance-prev-${prevNum}`,
+                        type: 'imbalance' as any,
+                        message: `기존 ${prevNum}반: 과다 ${maxSName}(${maxC}명) vs 부족 ${minSName}(${minC}명), 평균 ${avg.toFixed(1)}명`,
+                        studentIds: studentsFromPrev.map(s => s.id),
+                        studentNames: []
+                    });
+                }
+            }
+        });
+
+        return violations;
+    }, [allocation, constraintViolations, duplicateAnalysis, allStudents, classData]);
+
     // 전체 통계
     const overallStats = useMemo(() => {
         if (!allocation) return null;
 
-        const totalStudents = allocation.classes.reduce((sum, c) => sum + c.students.length, 0);
-        const maleCount = allocation.classes.reduce((sum, c) => sum + c.gender_stats.male, 0);
-        const femaleCount = allocation.classes.reduce((sum, c) => sum + c.gender_stats.female, 0);
+        const totalStudents = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => !s.is_transferring_out).length, 0);
+        const maleCount = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length, 0);
+        const femaleCount = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length, 0);
         const sepGroupCount = sepGroupMap.size;
         const bindGroupCount = bindGroupMap.size;
         const duplicateCount = duplicateNames.size;
@@ -529,12 +754,24 @@ export default function AllocationPage() {
         if (!classData) return `${classIndex + 1}반`;
 
         try {
+            // 1. 새 반 이름 (사용자가 조건 설정에서 입력한 이름) 우선
+            const newNames = classData.new_section_names
+                ? JSON.parse(classData.new_section_names)
+                : null;
+
+            if (newNames && Array.isArray(newNames) && newNames[classIndex]) {
+                const name = newNames[classIndex].trim();
+                return name.endsWith('반') ? name : `${name}반`;
+            }
+
+            // 2. 기존 반 이름 (동기화된 경우)
             const sectionNames = classData.section_names
                 ? JSON.parse(classData.section_names)
                 : null;
 
             if (sectionNames && Array.isArray(sectionNames) && sectionNames[classIndex]) {
-                return `${sectionNames[classIndex]}반`;
+                const name = sectionNames[classIndex].trim();
+                return name.endsWith('반') ? name : `${name}반`;
             }
         } catch (e) {
             console.error('Failed to parse section names:', e);
@@ -570,6 +807,22 @@ export default function AllocationPage() {
             if (rankDiff > 5) {
                 warnings.push(`석차 차이 ${rankDiff}등 (권장: 5등 이내)`);
             }
+        }
+
+        // 특수 조건 학생 체크 (경고)
+        const specialWarnings: string[] = [];
+        if (stA.is_special_class) specialWarnings.push(`${stA.name}: 특수교육대상`);
+        if (stA.is_problem_student) specialWarnings.push(`${stA.name}: 문제행동`);
+        if (stA.is_underachiever) specialWarnings.push(`${stA.name}: 학습부진`);
+        if (stA.is_transferring_out) specialWarnings.push(`${stA.name}: 전출예정`);
+
+        if (stB.is_special_class) specialWarnings.push(`${stB.name}: 특수교육대상`);
+        if (stB.is_problem_student) specialWarnings.push(`${stB.name}: 문제행동`);
+        if (stB.is_underachiever) specialWarnings.push(`${stB.name}: 학습부진`);
+        if (stB.is_transferring_out) specialWarnings.push(`${stB.name}: 전출예정`);
+
+        if (specialWarnings.length > 0) {
+            warnings.push(`⚠️ 특별관리 대상 학생 포함: ${specialWarnings.join(', ')}`);
         }
 
         // SEP 제약조건 체크 (경고)
@@ -912,7 +1165,7 @@ export default function AllocationPage() {
             if (!isManual) {
                 // 자동 저장의 경우에만 로그 (수동 저장은 이미 UI 처리됨)
                 console.log('💾 배정 자동 저장 완료');
-                setIsSavedAllocation(true);
+                // setIsSavedAllocation(true); // 제거: 명시적 저장 시에만 활성화
             }
         } catch (error) {
             console.error(error);
@@ -979,10 +1232,10 @@ export default function AllocationPage() {
                     '이름': student.name,
                     '성별': student.gender === 'M' ? '남' : '여',
                     '생년월일': student.birth_date || '',
-                    '특기사항': specialItems.join(', '),
+                    '특이사항': student.notes || '',  // 비고 내용을 특이사항으로
                     '연락처': student.contact || '',
                     '기존반': student.section_number ? `${student.section_number}반` : '',
-                    '비고': student.notes || ''
+                    '비고': specialItems.join(', ')  // 특기사항 내용을 비고로
                 };
             });
 
@@ -995,7 +1248,7 @@ export default function AllocationPage() {
                 { wch: 10 },  // 이름
                 { wch: 5 },   // 성별
                 { wch: 12 },  // 생년월일
-                { wch: 20 },  // 특기사항
+                { wch: 20 },  // 특이사항
                 { wch: 15 },  // 연락처
                 { wch: 8 },   // 기존반
                 { wch: 20 }   // 비고
@@ -1012,6 +1265,162 @@ export default function AllocationPage() {
         setToast({ message: '엑셀 파일이 다운로드되었습니다!', type: 'success' });
     };
 
+    // 선생님용 검토자료 엑셀 다운로드 (3개 반씩 가로 배치)
+    const handleExportTeacherReview = () => {
+        if (!allocation || !classData) return;
+
+        try {
+            const workbook = XLSX.utils.book_new();
+            const originalClassNumbers = Array.from(new Set(allStudents.map(s => s.section_number || 1))).sort((a, b) => a - b);
+
+            originalClassNumbers.forEach((origClassNum) => {
+                const grid: any[][] = [];
+
+                // 제목
+                grid.push([{ v: `[기존 ${origClassNum}반] 선생님 검토용 반배정 자료`, s: { font: { bold: true, sz: 14 } } }]);
+                grid.push([]);
+
+                // 요약표
+                grid.push([{ v: '📊 우리 반 학생 배분 현황', s: { font: { bold: true, sz: 12 } } }]);
+                grid.push([]);
+
+                const summaryHeader = ['새로운 반', '배정 인원', '학생 명단'].map(h => ({
+                    v: h,
+                    s: { font: { bold: true }, fill: { fgColor: { rgb: 'E0E0E0' } }, alignment: { horizontal: 'center' } }
+                }));
+                grid.push(summaryHeader);
+
+                allocation.classes.forEach((newClass, idx) => {
+                    const ourStudents = newClass.students.filter(s => (s.section_number || 1) === origClassNum);
+                    if (ourStudents.length > 0) {
+                        grid.push([
+                            getSectionName(idx),
+                            ourStudents.length + '명',
+                            ourStudents.map(s => s.name).join(', ')
+                        ]);
+                    }
+                });
+
+                grid.push([]);
+                grid.push([]);
+
+                // 3개 반씩 묶어서 가로 배치
+                const classesPerRow = 3;
+                const totalClasses = allocation.classes.length;
+
+                for (let groupStart = 0; groupStart < totalClasses; groupStart += classesPerRow) {
+                    const groupEnd = Math.min(groupStart + classesPerRow, totalClasses);
+                    const classesInGroup = allocation.classes.slice(groupStart, groupEnd);
+
+                    // 반 제목 행
+                    const titleRow: any[] = [];
+                    classesInGroup.forEach((newClass, idx) => {
+                        const actualIdx = groupStart + idx;
+                        const sectionName = getSectionName(actualIdx);
+                        const ourCount = newClass.students.filter(s => (s.section_number || 1) === origClassNum).length;
+
+                        titleRow.push({
+                            v: `【${sectionName}】 (우리반 ${ourCount}명)`,
+                            s: { font: { bold: true, sz: 11 }, fill: { fgColor: { rgb: 'D0E0F0' } }, alignment: { horizontal: 'center' } }
+                        });
+                        titleRow.push('', '', ''); // 나머지 컬럼
+                        if (idx < classesInGroup.length - 1) titleRow.push(''); // 간격
+                    });
+                    grid.push(titleRow);
+
+                    // 컬럼 헤더
+                    const headerRow: any[] = [];
+                    classesInGroup.forEach((_, idx) => {
+                        ['번호', '이름', '기존반', '비고'].forEach(h => {
+                            headerRow.push({ v: h, s: { font: { bold: true }, fill: { fgColor: { rgb: 'F0F0F0' } }, alignment: { horizontal: 'center' } } });
+                        });
+                        if (idx < classesInGroup.length - 1) headerRow.push('');
+                    });
+                    grid.push(headerRow);
+
+                    // 각 반의 학생 데이터 준비
+                    const groupData = classesInGroup.map(newClass => {
+                        const ourStudents = newClass.students.filter(s => (s.section_number || 1) === origClassNum);
+                        const otherStudents = newClass.students.filter(s => (s.section_number || 1) !== origClassNum);
+
+                        return [...ourStudents].sort(koreanSort).concat([...otherStudents].sort(koreanSort)).map((student, sIdx) => {
+                            const isOurs = (student.section_number || 1) === origClassNum;
+                            const specialTags = [];
+                            if (student.is_special_class) specialTags.push('특수');
+                            if (student.is_problem_student) specialTags.push('문제');
+                            if (student.is_underachiever) specialTags.push('부진');
+                            if (student.is_transferring_out) specialTags.push('전출');
+
+                            const cellStyle = isOurs ? {
+                                fill: { fgColor: { rgb: 'FFFF99' } },
+                                font: { bold: true }
+                            } : {};
+
+                            return [
+                                { v: sIdx + 1, s: cellStyle },
+                                { v: student.name, s: cellStyle },
+                                { v: student.section_number || 1, s: cellStyle },
+                                { v: specialTags.join(', '), s: cellStyle }
+                            ];
+                        });
+                    });
+
+                    // 최대 학생 수
+                    const maxStudents = Math.max(...groupData.map(d => d.length));
+
+                    // 학생 데이터 행 생성
+                    for (let i = 0; i < maxStudents; i++) {
+                        const row: any[] = [];
+                        groupData.forEach((classData, idx) => {
+                            if (i < classData.length) {
+                                row.push(...classData[i]);
+                            } else {
+                                row.push('', '', '', '');
+                            }
+                            if (idx < groupData.length - 1) row.push('');
+                        });
+                        grid.push(row);
+                    }
+
+                    // 그룹 사이 구분선
+                    if (groupEnd < totalClasses) {
+                        grid.push([]);
+                        const separatorRow = [];
+                        for (let i = 0; i < classesInGroup.length; i++) {
+                            separatorRow.push('─────', '─────', '─────', '─────');
+                            if (i < classesInGroup.length - 1) separatorRow.push('');
+                        }
+                        grid.push(separatorRow);
+                        grid.push([]);
+                    }
+                }
+
+                const worksheet = XLSX.utils.aoa_to_sheet(grid);
+
+                // 열 너비 설정
+                const colWidths: any[] = [];
+                for (let i = 0; i < classesPerRow; i++) {
+                    colWidths.push({ wch: 6 });   // 번호
+                    colWidths.push({ wch: 10 });  // 이름
+                    colWidths.push({ wch: 7 });   // 기존반
+                    colWidths.push({ wch: 12 });  // 비고
+                    if (i < classesPerRow - 1) colWidths.push({ wch: 2 }); // 간격
+                }
+                worksheet['!cols'] = colWidths;
+
+                XLSX.utils.book_append_sheet(workbook, worksheet, `기존${origClassNum}반`);
+            });
+
+            const fileName = `선생님용_검토자료_${classData.grade}학년_${new Date().toLocaleDateString('ko-KR').replace(/\./g, '').replace(/ /g, '')}.xlsx`;
+            XLSX.writeFile(workbook, fileName);
+            setToast({ message: '선생님용 검토자료가 다운로드되었습니다!', type: 'success' });
+        } catch (error) {
+            console.error('Excel export error:', error);
+            setToast({ message: 'Excel 파일 생성 중 오류가 발생했습니다.', type: 'error' });
+        }
+    };
+
+    // 기존반 기준 엑셀 다운로드
     // 기존반 기준 엑셀 다운로드
     const handleExportByOriginalClass = () => {
         if (!allocation || !classData) return;
@@ -1037,12 +1446,17 @@ export default function AllocationPage() {
                 .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
 
             const excelData = studentsInSection.map((student, idx) => {
-                // 특이사항 생성
+                // 특이사항 생성 (기존 비고 내용 사용)
                 const specialItems: string[] = [];
                 if (student.is_special_class) specialItems.push('특수교육대상');
                 if (student.is_problem_student) specialItems.push('문제행동');
                 if (student.is_underachiever) specialItems.push('학습부진');
                 if (student.is_transferring_out) specialItems.push('전출예정');
+
+                // 비고 내용을 특이사항에 추가
+                const notesText = student.notes || '';
+                const specialText = specialItems.join(', ');
+                const combinedSpecial = [specialText, notesText].filter(Boolean).join(', ');
 
                 return {
                     '번호': idx + 1,
@@ -1050,8 +1464,7 @@ export default function AllocationPage() {
                     '성별': student.gender === 'M' ? '남' : '여',
                     '생년월일': student.birth_date || '',
                     '배정학급': student.assignedSection,
-                    '특이사항': specialItems.join(', '),
-                    '비고': student.notes || ''
+                    '특이사항': combinedSpecial  // 비고 내용 포함
                 };
             });
 
@@ -1063,8 +1476,7 @@ export default function AllocationPage() {
                 { wch: 5 },   // 성별
                 { wch: 12 },  // 생년월일
                 { wch: 10 },  // 배정학급
-                { wch: 20 },  // 특이사항
-                { wch: 20 }   // 비고
+                { wch: 30 }   // 특이사항 (더 넓게)
             ];
 
             // 워크북에 시트 추가
@@ -1136,7 +1548,7 @@ export default function AllocationPage() {
                 .then(res => {
                     if (res.ok) {
                         console.log('💾 재편성 후 자동 저장 완료');
-                        setIsSavedAllocation(true);
+                        // setIsSavedAllocation(true); // 제거: 명시적 저장 시에만 활성화
                     }
                 })
                 .catch(err => console.error('Auto-save after reallocation failed:', err));
@@ -1183,7 +1595,20 @@ export default function AllocationPage() {
                     return false;
                 }
 
-                // 3. 석차 차이 5등 이내
+                // 3. 일반 학생만 추천 (특수 조건 학생 제외)
+                if (s.is_special_class || s.is_problem_student || s.is_underachiever || s.is_transferring_out) {
+                    console.log(`    ❌ 특별관리 대상 학생`);
+                    return false;
+                }
+
+                // 4. 분리/결합 조건이 있는 학생 제외
+                const { sep, bind } = parseConstraints(s);
+                if (sep.length > 0 || bind.length > 0) {
+                    console.log(`    ❌ 분리/결합 조건 있음`);
+                    return false;
+                }
+
+                // 5. 석차 차이 5등 이내
                 if (studentA.rank && s.rank) {
                     const diff = Math.abs(studentA.rank - s.rank);
                     if (diff <= 5) {
@@ -1436,7 +1861,7 @@ export default function AllocationPage() {
                                                 <div>• 동명이인이 같은반에 배정되었습니다.</div>
                                             )}
                                             <div style={{ marginTop: '0.5rem', color: 'var(--text-muted)' }}>
-                                                → 아래 통계 카드를 클릭하여 상세 내용을 확인하세요.
+                                                → 하단의 <strong>&apos;최종 조정 검토 체크리스트&apos;</strong>를 통해 상세 내용을 확인하고 조정하세요.
                                             </div>
                                         </div>
                                     </div>
@@ -1537,19 +1962,30 @@ export default function AllocationPage() {
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                                 {allocation.classes.map((cls, idx) => (
                                     <div key={idx} style={{
-                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                        padding: '1rem', background: 'rgba(30, 41, 59, 0.4)', borderRadius: '8px'
+                                        display: 'grid',
+                                        gridTemplateColumns: '80px 1fr auto',
+                                        alignItems: 'center',
+                                        padding: '1rem',
+                                        background: 'rgba(30, 41, 59, 0.4)',
+                                        borderRadius: '8px'
                                     }}>
                                         <span style={{ fontWeight: 600 }}>{getSectionName(idx)}</span>
-                                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                                            <span style={{ color: '#3b82f6' }}>남 {cls.gender_stats.male - cls.students.filter(s => s.gender === 'M' && s.is_transferring_out).length}명</span>
-                                            <span style={{ color: '#ec4899' }}>여 {cls.gender_stats.female - cls.students.filter(s => s.gender === 'F' && s.is_transferring_out).length}명</span>
+                                        <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'center' }}>
+                                            <span style={{ color: '#3b82f6', minWidth: '40px' }}>남 {cls.gender_stats.male - cls.students.filter(s => s.gender === 'M' && s.is_transferring_out).length}</span>
+                                            <span style={{ color: '#ec4899', minWidth: '40px' }}>여 {cls.gender_stats.female - cls.students.filter(s => s.gender === 'F' && s.is_transferring_out).length}</span>
+                                            {cls.special_factors.special > 0 && (
+                                                <span style={{ color: '#a855f7', minWidth: '45px', fontSize: '0.85rem' }}>특수 {cls.special_factors.special}</span>
+                                            )}
+                                        </div>
+                                        <div style={{ textAlign: 'right', minWidth: '100px' }}>
                                             <span style={{ fontWeight: 'bold', color: '#6366f1' }}>
-                                                총 {cls.students.filter(s => !s.is_transferring_out).length}명
-                                                {cls.special_factors.transfer > 0 && (
-                                                    <span style={{ fontWeight: 'normal', color: '#94a3b8', fontSize: '0.9em' }}> + 전출예정 {cls.special_factors.transfer}명</span>
-                                                )}
+                                                {cls.students.filter(s => !s.is_transferring_out).length}명
                                             </span>
+                                            {cls.special_factors.transfer > 0 && (
+                                                <div style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '2px' }}>
+                                                    + 전출예정 {cls.special_factors.transfer}명
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 ))}
@@ -1558,7 +1994,7 @@ export default function AllocationPage() {
                                 <span style={{ color: 'var(--text-secondary)' }}>평균: </span>
                                 <span style={{ fontWeight: 'bold', color: '#6366f1' }}>{overallStats ? (overallStats.totalStudents / overallStats.sectionCount).toFixed(1) : '-'}명</span>
                             </div>
-                            <button onClick={() => setShowClassSizeModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem' }}>닫기</button>
+                            <button onClick={() => setShowClassSizeModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>닫기</button>
                         </div>
                     </div>
                 )}
@@ -1590,7 +2026,7 @@ export default function AllocationPage() {
                                     );
                                 })}
                             </div>
-                            <button onClick={() => setShowRankModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem' }}>닫기</button>
+                            <button onClick={() => setShowRankModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>닫기</button>
                         </div>
                     </div>
                 )}
@@ -1645,7 +2081,7 @@ export default function AllocationPage() {
                                     <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>분리그룹이 없습니다.</div>
                                 )}
                             </div>
-                            <button onClick={() => setShowSepModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem' }}>닫기</button>
+                            <button onClick={() => setShowSepModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>닫기</button>
                         </div>
                     </div>
                 )}
@@ -1699,7 +2135,7 @@ export default function AllocationPage() {
                                     <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>같은반 그룹이 없습니다.</div>
                                 )}
                             </div>
-                            <button onClick={() => setShowBindModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem' }}>닫기</button>
+                            <button onClick={() => setShowBindModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>닫기</button>
                         </div>
                     </div>
                 )}
@@ -1737,7 +2173,7 @@ export default function AllocationPage() {
                                     </div>
                                 ))}
                             </div>
-                            <button onClick={() => setShowSpecialModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem' }}>닫기</button>
+                            <button onClick={() => setShowSpecialModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>닫기</button>
                         </div>
                     </div>
                 )}
@@ -1840,7 +2276,7 @@ export default function AllocationPage() {
                                 )}
                             </div>
 
-                            <button onClick={() => setShowDuplicateNamesModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1.5rem' }}>닫기</button>
+                            <button onClick={() => setShowDuplicateNamesModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>닫기</button>
                         </div>
                     </div>
                 )}
@@ -1979,29 +2415,35 @@ export default function AllocationPage() {
                                 </div>
                             )}
                         </div>
-                        <button
-                            onClick={handleDeleteData}
-                            disabled={!isSavedAllocation}
-                            style={{
-                                padding: '0.75rem 1.25rem',
-                                background: isSavedAllocation
-                                    ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
-                                    : 'rgba(100, 116, 139, 0.3)',
-                                border: 'none',
-                                borderRadius: '8px',
-                                color: isSavedAllocation ? '#fff' : 'rgba(255,255,255,0.5)',
-                                fontSize: '0.9rem',
-                                fontWeight: '600',
-                                cursor: isSavedAllocation ? 'pointer' : 'not-allowed',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                transition: 'all 0.2s',
-                                opacity: isSavedAllocation ? 1 : 0.6
-                            }}
-                        >
-                            🗑️ 데이터 삭제
-                        </button>
+                        {isSavedAllocation && (
+                            <button
+                                onClick={handleDeleteData}
+                                style={{
+                                    padding: '0.75rem 1.25rem',
+                                    background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    color: '#fff',
+                                    fontSize: '0.9rem',
+                                    fontWeight: '600',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.4)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                    e.currentTarget.style.boxShadow = 'none';
+                                }}
+                            >
+                                🗑️ 데이터 삭제
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -2090,41 +2532,6 @@ export default function AllocationPage() {
                     />
                 </div>
 
-                {/* 제약조건 위반 경고 */}
-                {(constraintViolations.sepViolations.length > 0 || constraintViolations.bindViolations.length > 0) && (
-                    <div style={{
-                        background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.05) 100%)',
-                        border: '2px solid rgba(239, 68, 68, 0.4)',
-                        borderRadius: '12px',
-                        padding: '1.5rem',
-                        marginBottom: '2rem',
-                        boxShadow: '0 4px 12px rgba(239, 68, 68, 0.2)'
-                    }}>
-                        <h3 style={{ margin: '0 0 1rem 0', color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            ⚠️ 제약조건 위반 경고
-                        </h3>
-                        {constraintViolations.sepViolations.length > 0 && (
-                            <div style={{ marginBottom: constraintViolations.bindViolations.length > 0 ? '1rem' : 0 }}>
-                                <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: '#dc2626' }}>분리 조건 위반:</h4>
-                                <ul style={{ margin: 0, paddingLeft: '1.5rem', color: 'var(--text-secondary)' }}>
-                                    {constraintViolations.sepViolations.map((v, i) => (
-                                        <li key={i} style={{ marginBottom: '0.25rem', fontSize: '0.9rem' }}>{v}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                        )}
-                        {constraintViolations.bindViolations.length > 0 && (
-                            <div>
-                                <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: '#dc2626' }}>같은 반 조건 위반:</h4>
-                                <ul style={{ margin: 0, paddingLeft: '1.5rem', color: 'var(--text-secondary)' }}>
-                                    {constraintViolations.bindViolations.map((v, i) => (
-                                        <li key={i} style={{ marginBottom: '0.25rem', fontSize: '0.9rem' }}>{v}</li>
-                                    ))}
-                                </ul>
-                            </div>
-                        )}
-                    </div>
-                )}
 
                 {/* 전체 통계 요약 카드 */}
                 {overallStats && (
@@ -2139,13 +2546,13 @@ export default function AllocationPage() {
                         <h3 style={{ margin: '0 0 1.5rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             📊 전체 배정 통계
                         </h3>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '1rem' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: '0.75rem' }}>
                             {/* 반인원 평균 */}
                             <div
                                 onClick={() => setShowClassSizeModal(true)}
                                 style={{
                                     textAlign: 'center',
-                                    padding: '1.25rem',
+                                    padding: '1rem 0.5rem',
                                     background: 'rgba(30, 41, 59, 0.4)',
                                     borderRadius: '8px',
                                     cursor: 'pointer',
@@ -2161,11 +2568,11 @@ export default function AllocationPage() {
                                     e.currentTarget.style.borderColor = 'transparent';
                                 }}
                             >
-                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>반인원 평균</div>
-                                <div style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#6366f1' }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>인원균형</div>
+                                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#6366f1' }}>
                                     {(overallStats.totalStudents / overallStats.sectionCount).toFixed(1)}
                                 </div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>명</div>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>명</div>
                             </div>
 
                             {/* 반 석차 평균 */}
@@ -2173,7 +2580,7 @@ export default function AllocationPage() {
                                 onClick={() => setShowRankModal(true)}
                                 style={{
                                     textAlign: 'center',
-                                    padding: '1.25rem',
+                                    padding: '1rem 0.5rem',
                                     background: 'rgba(30, 41, 59, 0.4)',
                                     borderRadius: '8px',
                                     cursor: 'pointer',
@@ -2189,15 +2596,74 @@ export default function AllocationPage() {
                                     e.currentTarget.style.borderColor = 'transparent';
                                 }}
                             >
-                                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>반 석차 평균</div>
-                                <div style={{ fontSize: '1.75rem', fontWeight: 'bold', color: '#3b82f6' }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>평균석차</div>
+                                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#3b82f6' }}>
                                     {(() => {
                                         if (!allocation) return '-';
                                         const allRanks = allocation.classes.flatMap(c => c.students.filter(s => s.rank).map(s => s.rank!));
                                         return allRanks.length > 0 ? (allRanks.reduce((a, b) => a + b, 0) / allRanks.length).toFixed(1) : '-';
                                     })()}
                                 </div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>등</div>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>등</div>
+                            </div>
+
+                            {/* 성비 비교 */}
+                            <div
+                                onClick={() => setShowGenderRatioModal(true)}
+                                style={{
+                                    textAlign: 'center',
+                                    padding: '1rem 0.5rem',
+                                    background: 'rgba(30, 41, 59, 0.4)',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    border: '1px solid transparent'
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'rgba(236, 72, 153, 0.15)';
+                                    e.currentTarget.style.borderColor = 'rgba(236, 72, 153, 0.4)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'rgba(30, 41, 59, 0.4)';
+                                    e.currentTarget.style.borderColor = 'transparent';
+                                }}
+                            >
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>성비비교</div>
+                                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#ec4899' }}>
+                                    {(() => {
+                                        if (!allocation) return '-';
+                                        const maleCount = allocation.classes.reduce((sum, c) => sum + c.gender_stats.male, 0);
+                                        const femaleCount = allocation.classes.reduce((sum, c) => sum + c.gender_stats.female, 0);
+                                        return `${Math.round((maleCount / (maleCount + femaleCount)) * 100)}:${Math.round((femaleCount / (maleCount + femaleCount)) * 100)}`;
+                                    })()}
+                                </div>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>남:여 비율</div>
+                            </div>
+
+                            {/* 기존반 배분 */}
+                            <div
+                                onClick={() => setShowDistributionMatrixModal(true)}
+                                style={{
+                                    textAlign: 'center',
+                                    padding: '1rem 0.5rem',
+                                    background: 'rgba(30, 41, 59, 0.4)',
+                                    borderRadius: '8px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    border: '1px solid transparent'
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'rgba(139, 92, 246, 0.15)';
+                                    e.currentTarget.style.borderColor = 'rgba(139, 92, 246, 0.4)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'rgba(30, 41, 59, 0.4)';
+                                    e.currentTarget.style.borderColor = 'transparent';
+                                }}
+                            >
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>기존반배분</div>
+                                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#8b5cf6' }}>현황보기</div>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>매트릭스 확인</div>
                             </div>
 
                             {/* 분리그룹 */}
@@ -2295,6 +2761,368 @@ export default function AllocationPage() {
                                     {duplicateAnalysis.fullDuplicates.length}개 / {duplicateAnalysis.givenNameDuplicates.length}개
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 체크리스트 섹션 */}
+                {allocation && (
+                    <div style={{
+                        background: 'rgba(30, 41, 59, 0.3)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '12px',
+                        padding: '1.5rem',
+                        marginBottom: '3rem'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                🚨 최종 조정 검토 체크리스트
+                            </h3>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                <button
+                                    onClick={handleExportTeacherReview}
+                                    style={{
+                                        padding: '0.5rem 1rem',
+                                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '8px',
+                                        cursor: 'pointer',
+                                        fontSize: '0.85rem',
+                                        fontWeight: '600',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '0.5rem',
+                                        transition: 'all 0.2s',
+                                        boxShadow: '0 2px 8px rgba(102, 126, 234, 0.3)'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.currentTarget.style.transform = 'translateY(-2px)';
+                                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.currentTarget.style.transform = 'translateY(0)';
+                                        e.currentTarget.style.boxShadow = '0 2px 8px rgba(102, 126, 234, 0.3)';
+                                    }}
+                                >
+                                    📊 검토자료 다운로드
+                                </button>
+                                <span style={{ fontSize: '0.85rem', color: allViolations.length === 0 ? '#10b981' : '#f59e0b' }}>
+                                    {allViolations.length === 0 ? '✓ 모든 검토 완료' : `미해결 항목 ${allViolations.length}건`}
+                                </span>
+                            </div>
+                        </div>
+
+                        {allViolations.length > 0 ? (
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+                                gap: '0.75rem',
+                                maxHeight: '280px',
+                                overflowY: 'auto',
+                                paddingRight: '0.5rem',
+                                scrollbarWidth: 'thin'
+                            }}>
+                                {allViolations.map((v) => (
+                                    <div
+                                        key={v.id}
+                                        onClick={() => {
+                                            if (v.studentIds.length > 0) {
+                                                const student = allStudents.find(s => s.id === v.studentIds[0]);
+                                                if (student) {
+                                                    setStudentA(student);
+                                                    setSearchA(student.name);
+                                                    const el = document.getElementById('exchange-section');
+                                                    if (el) el.scrollIntoView({ behavior: 'smooth' });
+                                                    setToast({ message: `${student.name} 학생을 교환 대상으로 선택했습니다.`, type: 'info' });
+                                                }
+                                            }
+                                        }}
+                                        style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.75rem',
+                                            padding: '0.75rem 1rem',
+                                            background: 'rgba(255, 255, 255, 0.02)',
+                                            border: '1px solid rgba(255, 255, 255, 0.05)',
+                                            borderRadius: '10px',
+                                            cursor: v.studentIds.length > 0 ? 'pointer' : 'default',
+                                            transition: 'all 0.2s',
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            if (v.studentIds.length > 0) {
+                                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                                                e.currentTarget.style.transform = 'translateY(-2px)';
+                                            }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
+                                            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.05)';
+                                            e.currentTarget.style.transform = 'translateY(0)';
+                                        }}
+                                    >
+                                        <div style={{
+                                            width: '28px',
+                                            height: '28px',
+                                            borderRadius: '8px',
+                                            background: v.type === 'sep' ? 'rgba(239, 68, 68, 0.1)' :
+                                                v.type === 'bind' ? 'rgba(16, 185, 129, 0.1)' :
+                                                    v.type === 'imbalance' as any ? 'rgba(234, 179, 8, 0.1)' :
+                                                        'rgba(245, 158, 11, 0.1)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            color: v.type === 'sep' ? '#ef4444' :
+                                                v.type === 'bind' ? '#10b981' :
+                                                    v.type === 'imbalance' as any ? '#eab308' :
+                                                        '#f59e0b',
+                                            fontSize: '14px',
+                                            flexShrink: 0
+                                        }}>
+                                            {v.type === 'sep' ? '🚫' : v.type === 'bind' ? '🔗' : v.type === 'imbalance' as any ? '⚖️' : '👥'}
+                                        </div>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{
+                                                fontSize: '0.8rem',
+                                                color: 'var(--text-secondary)',
+                                                lineHeight: '1.4'
+                                            }}>
+                                                {v.message}
+                                            </div>
+                                        </div>
+                                        {v.studentIds.length > 0 && (v.type as string) !== 'imbalance' && (
+                                            <div style={{ color: '#6366f1', fontSize: '0.7rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                                                이동 ➔
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div style={{
+                                padding: '2rem',
+                                textAlign: 'center',
+                                background: 'rgba(16, 185, 129, 0.05)',
+                                borderRadius: '8px',
+                                border: '1px dashed rgba(16, 185, 129, 0.2)',
+                                color: '#10b981'
+                            }}>
+                                <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>🎉</div>
+                                <div style={{ fontWeight: 600 }}>모든 제약 조건이 충족되었습니다.</div>
+                                <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>완벽하게 배정된 상태입니다!</div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* 성비 비교 상세 모달 */}
+                {showGenderRatioModal && allocation && (() => {
+                    // 평균 성비 계산
+                    const totalMale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.male, 0);
+                    const totalFemale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.female, 0);
+                    const avgMale = totalMale / allocation.classes.length;
+                    const avgFemale = totalFemale / allocation.classes.length;
+                    const avgMalePercent = (avgMale / (avgMale + avgFemale)) * 100;
+                    const avgFemalePercent = (avgFemale / (avgMale + avgFemale)) * 100;
+
+                    // 불균형 반 찾기 (평균 대비 ±2명 이상)
+                    const imbalancedClasses = allocation.classes
+                        .map((cls, idx) => ({
+                            idx,
+                            name: getSectionName(idx),
+                            male: cls.gender_stats.male,
+                            female: cls.gender_stats.female,
+                            maleDiff: cls.gender_stats.male - avgMale,
+                            femaleDiff: cls.gender_stats.female - avgFemale
+                        }))
+                        .filter(cls => Math.abs(cls.maleDiff) >= 2 || Math.abs(cls.femaleDiff) >= 2);
+
+                    return (
+                        <div style={{
+                            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                            background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            zIndex: 1500, backdropFilter: 'blur(5px)'
+                        }} onClick={() => setShowGenderRatioModal(false)}>
+                            <div className="card" style={{
+                                maxWidth: '500px', width: '90%', maxHeight: '85vh',
+                                overflow: 'auto', padding: '1.5rem'
+                            }} onClick={(e) => e.stopPropagation()}>
+                                <h2 style={{ marginBottom: '1rem', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    👫 남녀 성비 분석
+                                </h2>
+
+                                {/* 평균 성비 요약 */}
+                                <div style={{
+                                    background: 'rgba(59, 130, 246, 0.1)',
+                                    border: '1px solid rgba(59, 130, 246, 0.3)',
+                                    borderRadius: '8px',
+                                    padding: '1rem',
+                                    marginBottom: '1rem'
+                                }}>
+                                    <div style={{ fontSize: '0.85rem', fontWeight: 'bold', marginBottom: '0.5rem', color: '#60a5fa' }}>
+                                        📊 반별 평균 성비
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+                                        • 평균 남학생: {avgMale.toFixed(1)}명 ({avgMalePercent.toFixed(1)}%)
+                                        <br />
+                                        • 평균 여학생: {avgFemale.toFixed(1)}명 ({avgFemalePercent.toFixed(1)}%)
+                                    </div>
+                                </div>
+
+                                {/* 불균형 반 경고 */}
+                                {imbalancedClasses.length > 0 && (
+                                    <div style={{
+                                        background: 'rgba(245, 158, 11, 0.1)',
+                                        border: '1px solid rgba(245, 158, 11, 0.3)',
+                                        borderRadius: '8px',
+                                        padding: '1rem',
+                                        marginBottom: '1rem'
+                                    }}>
+                                        <div style={{ fontSize: '0.85rem', fontWeight: 'bold', marginBottom: '0.5rem', color: '#f59e0b' }}>
+                                            ⚠️ 불균형 반 (평균 대비 ±2명 이상)
+                                        </div>
+                                        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.8' }}>
+                                            {imbalancedClasses.map(cls => (
+                                                <div key={cls.idx}>
+                                                    • {cls.name}: 남 {cls.male}명
+                                                    <span style={{ color: cls.maleDiff > 0 ? '#ef4444' : '#10b981' }}>
+                                                        ({cls.maleDiff > 0 ? '+' : ''}{cls.maleDiff.toFixed(1)})
+                                                    </span>
+                                                    {' / '}여 {cls.female}명
+                                                    <span style={{ color: cls.femaleDiff > 0 ? '#ef4444' : '#10b981' }}>
+                                                        ({cls.femaleDiff > 0 ? '+' : ''}{cls.femaleDiff.toFixed(1)})
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* 반별 성비 상세 */}
+                                <div style={{ fontSize: '0.85rem', fontWeight: 'bold', marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>
+                                    📈 반별 성비 상세
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                                    {allocation.classes.map((cls, idx) => {
+                                        const total = cls.gender_stats.male + cls.gender_stats.female;
+                                        const maleRatio = total > 0 ? (cls.gender_stats.male / total) * 100 : 0;
+                                        const femaleRatio = total > 0 ? (cls.gender_stats.female / total) * 100 : 0;
+
+                                        return (
+                                            <div key={idx} style={{ background: 'rgba(30, 41, 59, 0.4)', padding: '0.6rem', borderRadius: '8px' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem', fontSize: '0.8rem' }}>
+                                                    <span style={{ fontWeight: 'bold' }}>{getSectionName(idx)}</span>
+                                                    <span style={{ color: 'var(--text-secondary)' }}>
+                                                        남 {cls.gender_stats.male} / 여 {cls.gender_stats.female}
+                                                    </span>
+                                                </div>
+                                                <div style={{ height: '16px', display: 'flex', borderRadius: '8px', overflow: 'hidden', background: 'rgba(255,255,255,0.1)' }}>
+                                                    <div style={{
+                                                        width: `${maleRatio}%`,
+                                                        background: 'linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%)',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.7rem', fontWeight: 'bold'
+                                                    }}>
+                                                        {maleRatio > 20 && `${Math.round(maleRatio)}%`}
+                                                    </div>
+                                                    <div style={{
+                                                        width: `${femaleRatio}%`,
+                                                        background: 'linear-gradient(90deg, #ec4899 0%, #f472b6 100%)',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '0.7rem', fontWeight: 'bold'
+                                                    }}>
+                                                        {femaleRatio > 20 && `${Math.round(femaleRatio)}%`}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <button onClick={() => setShowGenderRatioModal(false)} className="btn btn-primary" style={{ width: '100%', marginTop: '1.25rem', padding: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>닫기</button>
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* 기존반 배분 현황 (매트릭스) 모달 */}
+                {showDistributionMatrixModal && allocation && (
+                    <div style={{
+                        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        zIndex: 1500, backdropFilter: 'blur(5px)'
+                    }} onClick={() => setShowDistributionMatrixModal(false)}>
+                        <div className="card" style={{ maxWidth: '900px', width: '95%', maxHeight: '90vh', overflow: 'auto', padding: '2rem' }} onClick={(e) => e.stopPropagation()}>
+                            <h2 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                📂 기존반 ↔ 새 반 배분 매트릭스
+                            </h2>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+                                각 셀의 숫자는 해당 <strong>기존 반(행)</strong>에서 <strong>새로운 반(열)</strong>으로 배정된 학생 수입니다.
+                            </p>
+
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                    <thead>
+                                        <tr>
+                                            <th style={{ padding: '0.75rem', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.05)' }}>기존반 \ 새반</th>
+                                            {allocation.classes.map((_, idx) => (
+                                                <th key={idx} style={{ padding: '0.75rem', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.05)' }}>
+                                                    {getSectionName(idx)}
+                                                </th>
+                                            ))}
+                                            <th style={{ padding: '0.75rem', border: '1px solid var(--border)', background: 'rgba(255,255,255,0.05)', fontWeight: 'bold' }}>합계</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(() => {
+                                            const oldClasses = Array.from(new Set(allStudents.map(s => s.section_number || 1))).sort((a, b) => a - b);
+                                            const matrix = oldClasses.map(oldNum => {
+                                                const row = allocation.classes.map(cls =>
+                                                    cls.students.filter(s => (s.section_number || 1) === oldNum).length
+                                                );
+                                                const total = row.reduce((a, b) => a + b, 0);
+                                                const avg = total / allocation.classes.length;
+
+                                                return { oldNum, row, total, avg };
+                                            });
+
+                                            return matrix.map(({ oldNum, row, total, avg }) => (
+                                                <tr key={oldNum}>
+                                                    <td style={{ padding: '0.75rem', border: '1px solid var(--border)', textAlign: 'center', fontWeight: 'bold', background: 'rgba(255,255,255,0.05)' }}>
+                                                        {oldNum}반
+                                                    </td>
+                                                    {row.map((count, idx) => {
+                                                        const diff = Math.abs(count - avg);
+                                                        const isSkewed = diff > avg * 0.4; // 40% 이상 편차 시 강조
+                                                        return (
+                                                            <td key={idx} style={{
+                                                                padding: '0.75rem',
+                                                                border: '1px solid var(--border)',
+                                                                textAlign: 'center',
+                                                                background: isSkewed ? 'rgba(239, 68, 68, 0.15)' : count > 0 ? 'rgba(16, 185, 129, 0.05)' : 'transparent',
+                                                                color: isSkewed ? '#ef4444' : 'inherit',
+                                                                fontWeight: isSkewed ? 'bold' : 'normal'
+                                                            }}>
+                                                                {count}
+                                                            </td>
+                                                        );
+                                                    })}
+                                                    <td style={{ padding: '0.75rem', border: '1px solid var(--border)', textAlign: 'center', fontWeight: 'bold' }}>
+                                                        {total}
+                                                    </td>
+                                                </tr>
+                                            ));
+                                        })()}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
+                                    <div style={{ width: '12px', height: '12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444' }}></div>
+                                    <span style={{ color: 'var(--text-secondary)' }}>과도한 쏠림/부족 (평균 대비 ±40% 초과)</span>
+                                </div>
+                            </div>
+
+                            <button onClick={() => setShowDistributionMatrixModal(false)} className="btn btn-primary" style={{ width: '100%', marginTop: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>닫기</button>
                         </div>
                     </div>
                 )}
@@ -2574,10 +3402,10 @@ export default function AllocationPage() {
                                             color: 'var(--text-secondary)'
                                         }}>
                                             <div>
-                                                <span style={{ fontWeight: '600' }}>총원:</span> {cls.students.length}명
+                                                <span style={{ fontWeight: '600' }}>총원:</span> {cls.students.filter(s => !s.is_transferring_out).length}명
                                                 {cls.special_factors.transfer > 0 && (
                                                     <span style={{ marginLeft: '0.3rem', color: 'var(--text-muted)' }}>
-                                                        (전출예정 {cls.special_factors.transfer}명)
+                                                        + 전출예정 {cls.special_factors.transfer}명
                                                     </span>
                                                 )}
                                             </div>
@@ -2609,13 +3437,13 @@ export default function AllocationPage() {
                                                         borderBottom: '1px solid var(--border)'
                                                     }}>
                                                         <th style={{ padding: '0.5rem 0.3rem', textAlign: 'center', width: '5%' }}>번호</th>
-                                                        <th style={{ padding: '0.5rem 0.3rem', textAlign: 'left', width: '12%' }}>이름</th>
+                                                        <th style={{ padding: '0.5rem 0.3rem', textAlign: 'center', width: '12%' }}>이름</th>
                                                         <th style={{ padding: '0.5rem 0.3rem', textAlign: 'center', width: '6%' }}>성별</th>
                                                         <th style={{ padding: '0.5rem 0.3rem', textAlign: 'center', width: '12%' }}>생년월일</th>
-                                                        <th style={{ padding: '0.5rem 0.3rem', textAlign: 'left', width: '20%' }}>특기사항</th>
+                                                        <th style={{ padding: '0.5rem 0.3rem', textAlign: 'center', width: '20%' }}>특이사항</th>
                                                         <th style={{ padding: '0.5rem 0.3rem', textAlign: 'center', width: '15%' }}>연락처</th>
                                                         <th style={{ padding: '0.5rem 0.3rem', textAlign: 'center', width: '8%' }}>기존반</th>
-                                                        <th style={{ padding: '0.5rem 0.3rem', textAlign: 'left', width: '22%' }}>비고</th>
+                                                        <th style={{ padding: '0.5rem 0.3rem', textAlign: 'center', width: '22%' }}>비고</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
@@ -2648,12 +3476,60 @@ export default function AllocationPage() {
                                                                 }}>
                                                                     {index + 1}
                                                                 </td>
-                                                                <td style={{
-                                                                    padding: '0.6rem 0.5rem',
-                                                                    fontWeight: 600,
-                                                                    fontSize: '0.9rem',
-                                                                    color: 'var(--text-primary)'
-                                                                }}>
+                                                                <td
+                                                                    onClick={() => {
+                                                                        // 이미 선택된 학생인지 확인
+                                                                        if (studentA?.id === student.id || studentB?.id === student.id) {
+                                                                            setToast({ message: '이미 선택된 학생입니다.', type: 'warning' });
+                                                                            return;
+                                                                        }
+
+                                                                        // 학생 A가 비어있으면 A로, 아니면 B로
+                                                                        if (!studentA) {
+                                                                            setStudentA(student);
+                                                                            setSearchA(student.name);
+                                                                            const el = document.getElementById('exchange-section');
+                                                                            if (el) el.scrollIntoView({ behavior: 'smooth' });
+                                                                            setToast({ message: `${student.name} 학생을 학생 A로 선택했습니다.`, type: 'info' });
+                                                                        } else {
+                                                                            // 같은 반 학생인지 확인
+                                                                            const studentAClass = allocation?.classes.findIndex(c => c.students.some(s => s.id === studentA.id));
+                                                                            const studentBClass = allocation?.classes.findIndex(c => c.students.some(s => s.id === student.id));
+
+                                                                            if (studentAClass === studentBClass) {
+                                                                                setToast({ message: '같은 반 학생은 교환할 수 없습니다.', type: 'error' });
+                                                                                return;
+                                                                            }
+
+                                                                            setStudentB(student);
+                                                                            setSearchB(student.name);
+                                                                            setToast({ message: `${student.name} 학생을 학생 B로 선택했습니다. 교환 준비 완료!`, type: 'success' });
+                                                                        }
+                                                                    }}
+                                                                    style={{
+                                                                        padding: '0.6rem 0.5rem',
+                                                                        fontWeight: 600,
+                                                                        fontSize: '0.9rem',
+                                                                        color: 'var(--text-primary)',
+                                                                        textAlign: 'center',
+                                                                        cursor: 'pointer',
+                                                                        transition: 'all 0.2s',
+                                                                        backgroundColor: (studentA?.id === student.id || studentB?.id === student.id)
+                                                                            ? 'rgba(59, 130, 246, 0.2)'
+                                                                            : 'transparent'
+                                                                    }}
+                                                                    onMouseEnter={(e) => {
+                                                                        if (studentA?.id !== student.id && studentB?.id !== student.id) {
+                                                                            e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.1)';
+                                                                            e.currentTarget.style.color = '#3b82f6';
+                                                                        }
+                                                                    }}
+                                                                    onMouseLeave={(e) => {
+                                                                        const isSelected = studentA?.id === student.id || studentB?.id === student.id;
+                                                                        e.currentTarget.style.backgroundColor = isSelected ? 'rgba(59, 130, 246, 0.2)' : 'transparent';
+                                                                        e.currentTarget.style.color = 'var(--text-primary)';
+                                                                    }}
+                                                                >
                                                                     {student.name}
                                                                 </td>
                                                                 <td style={{
@@ -2675,7 +3551,7 @@ export default function AllocationPage() {
                                                                 </td>
                                                                 <td style={{
                                                                     padding: '0.6rem 0.5rem',
-                                                                    textAlign: 'left',
+                                                                    textAlign: 'center',
                                                                     fontSize: '0.8rem',
                                                                     maxWidth: '180px',
                                                                     overflow: 'hidden',
@@ -2704,10 +3580,10 @@ export default function AllocationPage() {
                                                                 </td>
                                                                 <td style={{
                                                                     padding: '0.6rem 0.5rem',
-                                                                    textAlign: 'left',
+                                                                    textAlign: 'center',
                                                                     fontSize: '0.75rem'
                                                                 }}>
-                                                                    <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                                                    <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center' }}>
                                                                         {hasSep && (
                                                                             <span
                                                                                 onClick={() => setClickedSepStudent(student)}
@@ -2831,40 +3707,74 @@ export default function AllocationPage() {
                                             flexDirection: 'column',
                                             gap: '1rem'
                                         }}>
-                                            {/* 석차 평균 카드 */}
-                                            {averageRank !== null && (
-                                                <div style={{
-                                                    background: 'var(--bg-secondary)',
-                                                    border: '1px solid var(--border)',
-                                                    borderRadius: '8px',
-                                                    padding: '1rem'
+                                            {/* 반별 검토 사항 카드 */}
+                                            <div style={{
+                                                background: 'var(--bg-secondary)',
+                                                border: '1px solid var(--border)',
+                                                borderRadius: '8px',
+                                                padding: '1rem'
+                                            }}>
+                                                <h4 style={{
+                                                    margin: '0 0 0.75rem 0',
+                                                    fontSize: '0.9rem',
+                                                    fontWeight: 'bold',
+                                                    color: 'var(--text-primary)'
                                                 }}>
-                                                    <h4 style={{
-                                                        margin: '0 0 0.75rem 0',
-                                                        fontSize: '0.9rem',
-                                                        fontWeight: 'bold',
-                                                        color: 'var(--text-primary)'
-                                                    }}>
-                                                        📊 석차 평균
-                                                    </h4>
-                                                    <div style={{
-                                                        fontSize: '1.8rem',
-                                                        fontWeight: 'bold',
-                                                        color: '#6366f1',
-                                                        textAlign: 'center',
-                                                        marginBottom: '0.5rem'
-                                                    }}>
-                                                        {averageRank}등
-                                                    </div>
-                                                    <div style={{
-                                                        fontSize: '0.75rem',
-                                                        color: 'var(--text-muted)',
-                                                        textAlign: 'center'
-                                                    }}>
-                                                        석차 보유 학생 {studentsWithRank.length}명
-                                                    </div>
+                                                    ⚠️ 검토 사항
+                                                </h4>
+                                                <div style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                                    {(() => {
+                                                        // 이 반에 해당하는 위반 사항만 필터링
+                                                        const classViolations = allViolations.filter(v => {
+                                                            // imbalance 타입은 특별 처리 (과다/부족 반만 표시)
+                                                            if ((v.type as string) === 'imbalance') {
+                                                                const sectionName = getSectionName(classIndex);
+                                                                return v.message.includes(`과다 ${sectionName}`) || v.message.includes(`부족 ${sectionName}`);
+                                                            }
+                                                            // 다른 타입은 학생 ID로 필터링
+                                                            if (v.studentIds && v.studentIds.length > 0) {
+                                                                return v.studentIds.some(id => cls.students.some(s => s.id === id));
+                                                            }
+                                                            return false;
+                                                        });
+
+                                                        // 결과 표시
+                                                        if (classViolations.length === 0) {
+                                                            return (
+                                                                <div style={{
+                                                                    color: '#10b981',
+                                                                    textAlign: 'center',
+                                                                    padding: '0.5rem',
+                                                                    background: 'rgba(16, 185, 129, 0.1)',
+                                                                    borderRadius: '4px'
+                                                                }}>
+                                                                    ✅ 검토 사항 없음
+                                                                </div>
+                                                            );
+                                                        }
+
+                                                        return classViolations.map((v, idx) => {
+                                                            const icon = v.type === 'sep' ? '🚫' :
+                                                                v.type === 'bind' ? '🔗' :
+                                                                    v.type === 'duplicate' ? '👥' :
+                                                                        v.type === 'similar' ? '📝' :
+                                                                            (v.type as string) === 'imbalance' ? '⚖️' : '⚠️';
+
+                                                            return (
+                                                                <div key={idx} style={{
+                                                                    color: '#f59e0b',
+                                                                    lineHeight: '1.4',
+                                                                    paddingLeft: '0.5rem',
+                                                                    borderLeft: '2px solid #f59e0b',
+                                                                    fontSize: '0.7rem'
+                                                                }}>
+                                                                    {icon} {v.message}
+                                                                </div>
+                                                            );
+                                                        });
+                                                    })()}
                                                 </div>
-                                            )}
+                                            </div>
 
                                             {/* 특별관리 학생 카드 */}
                                             <div style={{
@@ -2882,21 +3792,42 @@ export default function AllocationPage() {
                                                     📌 특별관리 학생
                                                 </h4>
                                                 <div style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                                    {cls.special_factors.problem > 0 && (
-                                                        <div style={{ color: 'var(--text-secondary)' }}>
-                                                            문제행동: <span style={{ fontWeight: '600', color: '#f97316' }}>{cls.special_factors.problem}명</span>
-                                                        </div>
-                                                    )}
-                                                    {cls.special_factors.special > 0 && (
-                                                        <div style={{ color: 'var(--text-secondary)' }}>
-                                                            특수교육: <span style={{ fontWeight: '600', color: '#a855f7' }}>{cls.special_factors.special}명</span>
-                                                        </div>
-                                                    )}
-                                                    {cls.special_factors.underachiever > 0 && (
-                                                        <div style={{ color: 'var(--text-secondary)' }}>
-                                                            학습부진: <span style={{ fontWeight: '600', color: '#3b82f6' }}>{cls.special_factors.underachiever}명</span>
-                                                        </div>
-                                                    )}
+                                                    {cls.special_factors.problem > 0 && (() => {
+                                                        const problemStudents = cls.students.filter(s => s.is_problem_student);
+                                                        return (
+                                                            <div style={{ color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                                                                문제행동: <span style={{ fontWeight: '600', color: '#f97316' }}>{cls.special_factors.problem}명</span>
+                                                                {' '}
+                                                                <span style={{ fontSize: '0.75rem', color: '#f97316' }}>
+                                                                    {problemStudents.map(s => s.name).join(', ')}
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                    {cls.special_factors.special > 0 && (() => {
+                                                        const specialStudents = cls.students.filter(s => s.is_special_class);
+                                                        return (
+                                                            <div style={{ color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                                                                특수교육: <span style={{ fontWeight: '600', color: '#a855f7' }}>{cls.special_factors.special}명</span>
+                                                                {' '}
+                                                                <span style={{ fontSize: '0.75rem', color: '#a855f7' }}>
+                                                                    {specialStudents.map(s => s.name).join(', ')}
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                    {cls.special_factors.underachiever > 0 && (() => {
+                                                        const underachievers = cls.students.filter(s => s.is_underachiever);
+                                                        return (
+                                                            <div style={{ color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                                                                학습부진: <span style={{ fontWeight: '600', color: '#3b82f6' }}>{cls.special_factors.underachiever}명</span>
+                                                                {' '}
+                                                                <span style={{ fontSize: '0.75rem', color: '#3b82f6' }}>
+                                                                    {underachievers.map(s => s.name).join(', ')}
+                                                                </span>
+                                                            </div>
+                                                        );
+                                                    })()}
                                                     {cls.special_factors.problem === 0 && cls.special_factors.special === 0 && cls.special_factors.underachiever === 0 && (
                                                         <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
                                                             없음
@@ -3004,15 +3935,18 @@ export default function AllocationPage() {
                     </div>
 
                     {/* 학생 교환 사이드바 */}
-                    <div style={{
-                        width: '350px',
-                        flexShrink: 0,
-                        position: 'sticky',
-                        top: '2rem',
-                        height: 'fit-content',
-                        maxHeight: 'calc(100vh - 4rem)',
-                        overflowY: 'auto'
-                    }}>
+                    <div
+                        id="exchange-section"
+                        style={{
+                            width: '350px',
+                            flexShrink: 0,
+                            position: 'sticky',
+                            top: '2rem',
+                            height: 'fit-content',
+                            maxHeight: 'calc(100vh - 4rem)',
+                            overflowY: 'auto'
+                        }}
+                    >
                         <div style={{
                             background: 'var(--bg-secondary)',
                             border: '1px solid var(--border)',
@@ -3124,7 +4058,10 @@ export default function AllocationPage() {
                                             {studentA.gender === 'M' ? '남' : '여'} {studentA.rank && `· ${studentA.rank}등`}
                                         </div>
                                         <button
-                                            onClick={() => setStudentA(null)}
+                                            onClick={() => {
+                                                setStudentA(null);
+                                                setSearchA('');
+                                            }}
                                             style={{
                                                 marginTop: '0.5rem',
                                                 padding: '0.25rem 0.5rem',
@@ -3282,7 +4219,10 @@ export default function AllocationPage() {
                                                 {studentB.gender === 'M' ? '남' : '여'} {studentB.rank && `· ${studentB.rank}등`}
                                             </div>
                                             <button
-                                                onClick={() => setStudentB(null)}
+                                                onClick={() => {
+                                                    setStudentB(null);
+                                                    setSearchB('');
+                                                }}
                                                 style={{
                                                     marginTop: '0.5rem',
                                                     padding: '0.25rem 0.5rem',
@@ -3360,7 +4300,10 @@ export default function AllocationPage() {
                                     style={{
                                         flex: 1,
                                         opacity: (isMoveMode ? !studentA : (!studentA || !studentB)) ? 0.5 : 1,
-                                        cursor: (isMoveMode ? !studentA : (!studentA || !studentB)) ? 'not-allowed' : 'pointer'
+                                        cursor: (isMoveMode ? !studentA : (!studentA || !studentB)) ? 'not-allowed' : 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
                                     }}
                                 >
                                     {isMoveMode ? '이동하기' : '교환하기'}
@@ -3373,6 +4316,11 @@ export default function AllocationPage() {
                                         setSearchB('');
                                     }}
                                     className="btn btn-secondary"
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    }}
                                 >
                                     초기화
                                 </button>
@@ -3502,6 +4450,179 @@ export default function AllocationPage() {
                     onCancel={() => setConfirmModal(null)}
                 />
             )}
+
+            {/* 인쇄 전용 영역 (화면엔 보이지 않음) */}
+            <div style={{ display: 'none' }} className="print-only-container">
+                <style>{`
+                    @media print {
+                        body * { visibility: hidden; }
+                        .print-only-container, .print-only-container * { 
+                            visibility: visible;
+                            color: #000 !important;
+                        }
+                        .print-only-container {
+                            display: block !important;
+                            position: absolute;
+                            left: 0;
+                            top: 0;
+                            width: 100%;
+                            background: white;
+                        }
+                        .page-break {
+                            page-break-after: always;
+                            margin-bottom: 50px;
+                        }
+                        @page {
+                            size: A4;
+                            margin: 15mm;
+                        }
+                        table {
+                            width: 100%;
+                            border-collapse: collapse;
+                            margin-bottom: 15px;
+                            font-size: 11px;
+                            page-break-inside: avoid;
+                            color: #000 !important;
+                        }
+                        th, td {
+                            border: 1px solid #000;
+                            padding: 4px 6px;
+                            text-align: center;
+                            color: #000 !important;
+                        }
+                        th {
+                            background-color: #f3f4f6 !important;
+                            -webkit-print-color-adjust: exact;
+                            color: #000 !important;
+                            font-weight: bold;
+                        }
+                        .highlight-student {
+                            background-color: #fef08a !important;
+                            font-weight: bold;
+                            -webkit-print-color-adjust: exact;
+                            color: #000 !important;
+                        }
+                        .distribution-summary {
+                            margin-bottom: 30px;
+                        }
+                        .new-classes-grid {
+                            display: flex;
+                            flex-wrap: wrap;
+                            gap: 10px;
+                            align-items: flex-start;
+                        }
+                        .new-class-column {
+                            flex: 1;
+                            min-width: 22%;
+                            max-width: 32%;
+                            page-break-inside: avoid;
+                        }
+                        .header-title {
+                            font-size: 20px;
+                            font-weight: bold;
+                            margin-bottom: 20px;
+                            text-align: center;
+                            border-bottom: 2px solid #000;
+                            padding-bottom: 10px;
+                            color: #000 !important;
+                        }
+                        .section-title {
+                            font-size: 14px;
+                            font-weight: bold;
+                            margin-bottom: 8px;
+                            background-color: #e5e7eb !important;
+                            padding: 4px;
+                            border: 1px solid #000;
+                            -webkit-print-color-adjust: exact;
+                            color: #000 !important;
+                        }
+                    }
+                `}</style>
+                {(() => {
+                    if (!allocation) return null;
+                    const originalClassNumbers = Array.from(new Set(allStudents.map(s => s.section_number || 1))).sort((a, b) => a - b);
+
+                    return originalClassNumbers.map((origClassNum) => {
+                        const studentsOfThisOrigClass = allStudents.filter(s => (s.section_number || 1) === origClassNum);
+
+                        return (
+                            <div key={origClassNum} className="page-break">
+                                <div className="header-title">
+                                    [기존 {origClassNum}반] 선생님 검토용 반배정 자료
+                                </div>
+
+                                <div className="distribution-summary">
+                                    <div className="section-title">📊 기존 {origClassNum}반 학생 배정 요약</div>
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>새로운 반</th>
+                                                <th>배정 인원</th>
+                                                <th>대상 학생 명단</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {allocation.classes.map((newClass, idx) => {
+                                                const assignedStudents = newClass.students.filter(s => (s.section_number || 1) === origClassNum);
+                                                if (assignedStudents.length === 0) return null;
+                                                return (
+                                                    <tr key={idx}>
+                                                        <td style={{ fontWeight: 'bold' }}>{getSectionName(idx)}</td>
+                                                        <td>{assignedStudents.length}명</td>
+                                                        <td style={{ textAlign: 'left', paddingLeft: '8px' }}>{assignedStudents.map(s => s.name).join(', ')}</td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div className="section-title">👥 새 학급별 명렬표 (기존 {origClassNum}반 학생 강조)</div>
+                                <div className="new-classes-grid">
+                                    {allocation.classes.map((newClass, idx) => {
+                                        return (
+                                            <div key={idx} className="new-class-column">
+                                                <div style={{ fontWeight: 'bold', textAlign: 'center', marginBottom: '4px', border: '1px solid #000', background: '#f9fafb', padding: '4px' }}>
+                                                    {getSectionName(idx)}
+                                                </div>
+                                                <table>
+                                                    <thead>
+                                                        <tr>
+                                                            <th style={{ width: '30px' }}>번호</th>
+                                                            <th>이름</th>
+                                                            <th style={{ width: '50px' }}>기존반</th>
+                                                            <th style={{ width: '60px' }}>비고</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {[...newClass.students].sort(koreanSort).map((student, sIdx) => {
+                                                            const isFromOrigClass = (student.section_number || 1) === origClassNum;
+                                                            const specialTags = [];
+                                                            if (student.is_special_class) specialTags.push('특수');
+                                                            if (student.is_problem_student) specialTags.push('문제');
+                                                            if (student.is_underachiever) specialTags.push('부진');
+                                                            if (student.is_transferring_out) specialTags.push('전출');
+
+                                                            return (
+                                                                <tr key={student.id} className={isFromOrigClass ? 'highlight-student' : ''}>
+                                                                    <td>{sIdx + 1}</td>
+                                                                    <td>{student.name}</td>
+                                                                    <td>{student.section_number || 1}</td>
+                                                                    <td style={{ fontSize: '9px' }}>{specialTags.join(',')}</td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        );
+                    });
+                })()}
+            </div>
         </div>
     );
 }

@@ -1687,7 +1687,7 @@ function ConditionsPageContent() {
                             <button
                                 onClick={() => setShowTempSaveModal(false)}
                                 className="btn btn-primary"
-                                style={{ minWidth: '120px', display: 'block', margin: '0 auto' }}
+                                style={{ minWidth: '120px', display: 'flex', margin: '0 auto', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}
                             >
                                 확인
                             </button>
@@ -1734,6 +1734,7 @@ function ConditionsPageContent() {
                                     }}
                                     className="btn btn-secondary"
                                     disabled={deadlineLoading}
+                                    style={{ flex: 1, textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                 >
                                     취소
                                 </button>
@@ -1741,8 +1742,13 @@ function ConditionsPageContent() {
                                     onClick={handleDeadlineAction}
                                     className="btn"
                                     style={{
-                                        background: pendingAction === 'complete' ? 'var(--success)' : 'var(--text-secondary)',
-                                        color: 'white'
+                                        flex: 1,
+                                        background: pendingAction === 'complete' ? 'var(--success)' : '#f59e0b',
+                                        color: 'white',
+                                        textAlign: 'center',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
                                     }}
                                     disabled={deadlineLoading}
                                 >
