@@ -121,14 +121,26 @@ function calculatePenalty(
     const sameGenderCount = gender === 'M' ? counts.male : counts.female;
     penalty += sameGenderCount * 1_000; // 10^3
 
-    // 7. [Layer 7] 특별관리대상 분산 (10^2)
+    // 7. [Layer 7] 특별관리대상 분산 (10^3) - 성별 균형과 동등
     if (student.is_problem_student) {
         const problemCount = targetClass.filter(s => s.is_problem_student && !s.is_transferring_out).length;
-        penalty += problemCount * 100;
+        penalty += problemCount * 1000;
+
+        // 특수학생 반 부담 감소: 특수학생 있는 반에 문제행동 배정 시 추가 페널티
+        const specialCount = targetClass.filter(s => s.is_special_class && !s.is_transferring_out).length;
+        if (specialCount > 0) {
+            penalty += specialCount * 10000; // 특수학생 1명당 10000점 추가 페널티 (기존반 분산과 동등)
+        }
     }
     if (student.is_underachiever) {
         const underachieverCount = targetClass.filter(s => s.is_underachiever && !s.is_transferring_out).length;
-        penalty += underachieverCount * 100;
+        penalty += underachieverCount * 1000;
+
+        // 특수학생 반 부담 감소: 특수학생 있는 반에 부진아 배정 시 추가 페널티
+        const specialCount = targetClass.filter(s => s.is_special_class && !s.is_transferring_out).length;
+        if (specialCount > 0) {
+            penalty += specialCount * 10000; // 특수학생 1명당 10000점 추가 페널티 (기존반 분산과 동등)
+        }
     }
 
     // 8. [Layer 8] 학업 수준 평탄화 (10^1)
@@ -411,4 +423,230 @@ export function allocateStudents(
             }
         }
     };
+}
+
+// ========================================
+// 최적화 기능 (Multi-run Optimization)
+// ========================================
+
+function shuffleArray<T>(array: T[]): T[] {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
+// 이름 추출 (성 제외)
+function extractGivenName(fullName: string): string {
+    const trimmed = fullName.trim();
+    if (trimmed.length >= 2) {
+        return trimmed.substring(1);
+    }
+    return trimmed;
+}
+
+export function calculateViolationScore(result: AllocationResult): number {
+    let score = 0;
+
+    const sepGroupMap = new Map<string, Array<{ student: Student; classIndex: number }>>();
+    const bindGroupMap = new Map<string, Array<{ student: Student; classIndex: number }>>();
+
+    result.classes.forEach((cls, classIndex) => {
+        cls.students.forEach(student => {
+            const { sep, bind } = parseConstraints(student);
+            sep.forEach(groupName => {
+                if (!sepGroupMap.has(groupName)) sepGroupMap.set(groupName, []);
+                sepGroupMap.get(groupName)!.push({ student, classIndex });
+            });
+            bind.forEach(groupName => {
+                if (!bindGroupMap.has(groupName)) bindGroupMap.set(groupName, []);
+                bindGroupMap.get(groupName)!.push({ student, classIndex });
+            });
+        });
+    });
+
+    // SEP 위반 (같은 그룹이 같은 반)
+    sepGroupMap.forEach(members => {
+        const classIndices = members.map(m => m.classIndex);
+        const duplicates = classIndices.filter((idx, i) => classIndices.indexOf(idx) !== i);
+        score += duplicates.length * 10000;
+    });
+
+    // BIND 위반 (같은 그룹이 다른 반)
+    bindGroupMap.forEach(members => {
+        const uniqueClasses = new Set(members.map(m => m.classIndex));
+        if (uniqueClasses.size > 1) score += (uniqueClasses.size - 1) * 10000;
+    });
+
+    // 동명이인 및 유사 이름 같은 반
+    result.classes.forEach(cls => {
+        const fullNameCount = new Map<string, number>();
+        const givenNameCount = new Map<string, number>();
+
+        cls.students.filter(s => !s.is_transferring_out).forEach(s => {
+            const fName = s.name.trim();
+            const gName = extractGivenName(s.name);
+            fullNameCount.set(fName, (fullNameCount.get(fName) || 0) + 1);
+            givenNameCount.set(gName, (givenNameCount.get(gName) || 0) + 1);
+        });
+
+        // 1. 완전 동명이인 페널티
+        fullNameCount.forEach(count => {
+            if (count > 1) score += (count - 1) * 5000;
+        });
+
+        // 2. 유사 이름 페널티 (완전 동명이인이 아닌 경우만)
+        givenNameCount.forEach((count, gName) => {
+            if (count > 1) {
+                const studentsWithThisGivenName = cls.students.filter(s =>
+                    !s.is_transferring_out && extractGivenName(s.name) === gName
+                );
+                const uniqueFullNames = new Set(studentsWithThisGivenName.map(s => s.name.trim())).size;
+
+                if (uniqueFullNames > 1) {
+                    score += (count - 1) * 1000; // 유사 이름은 1000점 (완전 동명보다 낮음)
+                }
+            }
+        });
+    });
+
+    // 인원 불균형
+    const weightedSizes = result.classes.map(cls => {
+        const actual = cls.students.filter(s => !s.is_transferring_out).length;
+        const special = cls.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
+        return actual + special;
+    });
+    const sizeDiff = Math.max(...weightedSizes) - Math.min(...weightedSizes);
+    score += sizeDiff * 50; // 기초 페널티 (모든 편차에 대해 균형 유도)
+    if (sizeDiff > 1) score += (sizeDiff - 1) * 500;
+
+    // 성비 불균형
+    result.classes.forEach(cls => {
+        const m = cls.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
+        const f = cls.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
+        const diff = Math.abs(m - f);
+        score += diff * 50; // 기초 페널티 (성비 균형 유도)
+        if (diff > 4) score += (diff - 4) * 2000; // 성비 편차 4명 초과당 2000점 (강화)
+    });
+
+    // 특별관리대상 분산 - 각각 따로 계산
+    // 1. 문제행동 학생 분산
+    const problemCounts = result.classes.map(cls =>
+        cls.students.filter(s => s.is_problem_student && !s.is_transferring_out).length
+    );
+    const problemMax = Math.max(...problemCounts);
+    const problemMin = Math.min(...problemCounts);
+    const pDiff = problemMax - problemMin;
+    score += pDiff * 100; // 기초 페널티 (문제행동 학생 균등 분산 유도)
+    if (pDiff > 1) {
+        score += (pDiff - 1) * 5000; // 문제행동 편차 1명 초과당 5000점 (편차 2명 이하 강제)
+    }
+
+    // 2. 학습부진 학생 분산
+    const underachieverCounts = result.classes.map(cls =>
+        cls.students.filter(s => s.is_underachiever && !s.is_transferring_out).length
+    );
+    const underMax = Math.max(...underachieverCounts);
+    const underMin = Math.min(...underachieverCounts);
+    const uDiff = underMax - underMin;
+    score += uDiff * 100; // 기초 페널티 (학습부진 학생 균등 분산 유도)
+    if (uDiff > 1) {
+        score += (uDiff - 1) * 5000; // 학습부진 편차 1명 초과당 5000점 (편차 2명 이하 강제)
+    }
+
+    // 3. 특수학생 분산
+    const specialCounts = result.classes.map(cls =>
+        cls.students.filter(s => s.is_special_class && !s.is_transferring_out).length
+    );
+    const specialMax = Math.max(...specialCounts);
+    const specialMin = Math.min(...specialCounts);
+    const sDiff = specialMax - specialMin;
+    score += sDiff * 100; // 기초 페널티 (특수학생 균등 분산 유도)
+    if (sDiff > 1) {
+        score += (sDiff - 1) * 500; // 특수학생 편차 1명 초과당 500점
+    }
+
+    // 4. 특수학생 반 부담 감소 (특수학생 있는 반에 문제행동/부진아 적게 배정)
+    result.classes.forEach(cls => {
+        const specialCount = cls.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
+        if (specialCount > 0) {
+            const problemCount = cls.students.filter(s => s.is_problem_student && !s.is_transferring_out).length;
+            const underCount = cls.students.filter(s => s.is_underachiever && !s.is_transferring_out).length;
+            // 특수학생 있는 반에 문제행동/부진아가 있으면 높은 페널티
+            score += (problemCount + underCount) * specialCount * 1000;
+        }
+    });
+
+    // 기존반 쏠림 (각 기존반 학생들이 새 반에 골고루 분산되었는지)
+    const allStudents = result.classes.flatMap((cls, idx) =>
+        cls.students.map(s => ({ ...s, newClassIdx: idx }))
+    );
+    const prevClasses = [...new Set(allStudents.map(s => s.section_number || 1))];
+
+    prevClasses.forEach(prevNum => {
+        const fromPrev = allStudents.filter(s => (s.section_number || 1) === prevNum && !s.is_transferring_out);
+        if (fromPrev.length === 0) return;
+
+        const dist = new Map<number, number>();
+        fromPrev.forEach(s => {
+            dist.set(s.newClassIdx, (dist.get(s.newClassIdx) || 0) + 1);
+        });
+
+        const counts = Array.from(dist.values());
+        if (counts.length > 0) {
+            const maxC = Math.max(...counts);
+            const minC = dist.size < result.classes.length ? 0 : Math.min(...counts);
+            const pDiff = maxC - minC;
+            score += pDiff * 50; // 기초 페널티 (기존반 구성 균형 유도)
+            if (pDiff >= 3) {
+                score += (pDiff - 2) * 1500; // 기존반 편차 2명 초과당 1500점
+            }
+        }
+    });
+
+    // 평균 석차 불균형 (추가)
+    const rankStats = result.classes.map((c) => {
+        const ranks = c.students.filter(s => s.rank && !s.is_transferring_out).map(s => s.rank!);
+        return ranks.length > 0 ? ranks.reduce((a, b) => a + b, 0) / ranks.length : 0;
+    }).filter(avg => avg > 0);
+
+    if (rankStats.length > 1) {
+        const maxRank = Math.max(...rankStats);
+        const minRank = Math.min(...rankStats);
+        const rankDiff = maxRank - minRank;
+        score += rankDiff * 100; // 기초 페널티
+        if (rankDiff > 5.0) score += (rankDiff - 5.0) * 1000;
+    }
+
+    return score;
+}
+
+export function allocateStudentsOptimized(
+    students: Student[],
+    classCount: number,
+    options: any = {},
+    iterations: number = 10
+): { result: AllocationResult; score: number; bestIteration: number; allScores: number[] } {
+    let bestResult: AllocationResult | null = null;
+    let bestScore = Infinity;
+    let bestIteration = 0;
+    const allScores: number[] = [];
+
+    for (let i = 0; i < iterations; i++) {
+        const shuffled = shuffleArray([...students]);
+        const result = allocateStudents(shuffled, classCount, options);
+        const score = calculateViolationScore(result);
+        allScores.push(score);
+
+        if (score < bestScore) {
+            bestScore = score;
+            bestResult = result;
+            bestIteration = i + 1;
+        }
+        // 0점이어도 조기 종료하지 않음 - 10번 모두 실행하여 최적 분산 결과 선택
+    }
+
+    return { result: bestResult!, score: bestScore, bestIteration, allScores };
 }

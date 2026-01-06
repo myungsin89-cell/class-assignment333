@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Student, ClassData, AllocationResult } from '../../../../lib/types';
-import { allocateStudents } from '../../../../lib/algorithm';
+import { allocateStudents, allocateStudentsOptimized } from '../../../../lib/algorithm';
+import { detectIssues, findSwapSolutions, Issue, SwapSolution } from '../../../../lib/aiRecommender';
 import StepCard from '../../../components/StepCard';
 import Toast, { ToastType } from '../../../components/Toast';
 import ConfirmModal from '../../../components/ConfirmModal';
@@ -138,6 +139,7 @@ function getSectionColor(index: number): { bg: string, border: string, text: str
     return colors[index % colors.length];
 }
 
+
 export default function AllocationPage() {
     const params = useParams();
     const router = useRouter();
@@ -168,7 +170,14 @@ export default function AllocationPage() {
     const [highlightedStudents, setHighlightedStudents] = useState<Set<number>>(new Set());
     const [expandedOldClass, setExpandedOldClass] = useState<{ sectionIndex: number; oldSection: number } | null>(null);
     const [reAllocating, setReAllocating] = useState(false);
+    const [isAllocating, setIsAllocating] = useState(false); // 배정 진행 중 로딩 상태
     const [isSavedAllocation, setIsSavedAllocation] = useState(false); // 저장된 배정인지 여부
+
+    // AI 추천 상태
+    const [showAiModal, setShowAiModal] = useState(false);
+    const [aiIssues, setAiIssues] = useState<Issue[]>([]);
+    const [aiSolutions, setAiSolutions] = useState<SwapSolution[]>([]);
+    const [selectedSolutions, setSelectedSolutions] = useState<Set<number>>(new Set());
 
     // 토스트 알림 상태
     const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
@@ -296,19 +305,23 @@ export default function AllocationPage() {
                 console.log('✅ 저장된 배정 불러오기 완료!');
             } else {
                 console.log('🔄 새로운 배정 생성 중...');
+                setIsAllocating(true); // 로딩 시작
 
-                // 3. 저장된 배정이 없으면 새로 배정
-                const result = allocateStudents(allStudents, sectionCount, {
-                    specialReductionCount: classData.special_reduction_count || 0,
-                    specialReductionMode: classData.special_reduction_mode || 'flexible'
-                });
-                setAllocation(result);
-                setIsSavedAllocation(false); // 새로 생성된 배정
-                setShowSummary(true);
-                console.log('✅ 새로운 배정 생성 완료!');
-
-                // 자동 저장 실행
+                // 3. 저장된 배정이 없으면 새로 배정 (100회 시도 후 최적 결과 선택)
                 setTimeout(() => {
+                    const optimized = allocateStudentsOptimized(allStudents, sectionCount, {
+                        specialReductionCount: classData.special_reduction_count || 0,
+                        specialReductionMode: classData.special_reduction_mode || 'flexible'
+                    }, 100);
+
+                    const result = optimized.result;
+                    setAllocation(result);
+                    setIsSavedAllocation(false); // 새로 생성된 배정
+                    setIsAllocating(false); // 로딩 종료
+                    setShowSummary(true);
+                    console.log('✅ 새로운 배정 생성 완료!');
+
+                    // 자동 저장 실행
                     const allocations = result.classes.flatMap(cls =>
                         cls.students.map(s => ({
                             studentId: s.id,
@@ -324,11 +337,10 @@ export default function AllocationPage() {
                         .then(res => {
                             if (res.ok) {
                                 console.log('💾 배정 자동 저장 완료');
-                                // setIsSavedAllocation(true); // 제거: 명시적 저장 시에만 활성화
                             }
                         })
                         .catch(err => console.error('Auto-save failed:', err));
-                }, 500);
+                }, 100);
             }
         }
     }, [loading, allStudents, classData, allocation, classId]);
@@ -630,6 +642,14 @@ export default function AllocationPage() {
 
         return violations;
     }, [allocation, constraintViolations, duplicateAnalysis, allStudents, classData]);
+
+    // AI 미세 최적화 제안 (체크리스트와 별도로 표시)
+    const aiOptimizationTip = useMemo(() => {
+        if (!allocation || allViolations.length > 0) return null;
+
+        const aiIssues = detectIssues(allocation);
+        return aiIssues.find(i => i.type === 'optimization');
+    }, [allocation, allViolations]);
 
     // 전체 통계
     const overallStats = useMemo(() => {
@@ -1514,10 +1534,14 @@ export default function AllocationPage() {
         setTimeout(() => {
             // new_section_count (조건설정에서 설정한 분반 개수) 우선 사용, 없으면 section_count 사용
             const sectionCount = classData?.new_section_count || classData?.section_count || 1;
-            const result = allocateStudents(allStudents, sectionCount, {
+
+            // 100회 반복 실행하여 최적 결과 선택
+            const optimized = allocateStudentsOptimized(allStudents, sectionCount, {
                 specialReductionCount: classData?.special_reduction_count || 0,
                 specialReductionMode: classData?.special_reduction_mode || 'flexible'
-            });
+            }, 100);
+
+            const result = optimized.result;
             setAllocation(result);
             setIsSavedAllocation(false); // 재편성 후에는 저장되지 않은 상태
 
@@ -1548,13 +1572,64 @@ export default function AllocationPage() {
                 .then(res => {
                     if (res.ok) {
                         console.log('💾 재편성 후 자동 저장 완료');
-                        // setIsSavedAllocation(true); // 제거: 명시적 저장 시에만 활성화
                     }
                 })
                 .catch(err => console.error('Auto-save after reallocation failed:', err));
         }, 300);
     };
 
+    // AI 추천 실행
+    const handleAiRecommendation = () => {
+        if (!allocation) return;
+
+        const issues = detectIssues(allocation);
+        if (issues.length === 0) {
+            setToast({ message: '해결할 문제가 없습니다! ✅', type: 'success' });
+            return;
+        }
+
+        // 최상의 해결책 1개만 가져오기 (v2.1)
+        const solutions = findSwapSolutions(allocation, issues, 1);
+        setAiIssues(issues);
+        setAiSolutions(solutions);
+        setSelectedSolutions(new Set());
+        setShowAiModal(true);
+    };
+
+
+    // AI 솔루션 선택/해제
+    const toggleSolution = (index: number) => {
+        const newSelected = new Set(selectedSolutions);
+        if (newSelected.has(index)) {
+            newSelected.delete(index);
+        } else {
+            newSelected.add(index);
+        }
+        setSelectedSolutions(newSelected);
+    };
+
+    // 선택된 솔루션 적용
+    const applySelectedSolutions = () => {
+        if (selectedSolutions.size === 0) {
+            setToast({ message: '적용할 솔루션을 선택해주세요', type: 'error' });
+            return;
+        }
+
+        // 선택된 솔루션 적용
+        const solutionsToApply = Array.from(selectedSolutions)
+            .map(idx => aiSolutions[idx])
+            .filter(Boolean);
+
+        solutionsToApply.forEach(solution => {
+            performSwap(solution.studentA, solution.studentB);
+        });
+
+        setShowAiModal(false);
+        setToast({
+            message: `${solutionsToApply.length}개의 교환이 적용되었습니다`,
+            type: 'success'
+        });
+    };
     // 학생 검색 필터링
     const getFilteredStudents = (search: string) => {
         if (!allocation || !search) return [];
@@ -1631,6 +1706,48 @@ export default function AllocationPage() {
     };
 
     if (loading) return <div className="container" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div className="loading"></div></div>;
+
+    // 배정 진행 중 로딩 화면
+    if (isAllocating || reAllocating) return (
+        <div className="container" style={{
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '1.5rem'
+        }}>
+            <div style={{
+                width: '60px',
+                height: '60px',
+                border: '4px solid rgba(99, 102, 241, 0.2)',
+                borderTop: '4px solid #6366f1',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite'
+            }}></div>
+            <div style={{
+                fontSize: '1.25rem',
+                fontWeight: '600',
+                color: 'var(--text-primary)',
+                textAlign: 'center'
+            }}>
+                반배정중입니다...
+            </div>
+            <div style={{
+                fontSize: '0.9rem',
+                color: 'var(--text-secondary)',
+                textAlign: 'center'
+            }}>
+                최적의 배정 결과를 찾고 있습니다
+            </div>
+            <style>{`
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            `}</style>
+        </div>
+    );
 
     const filteredStudentsA = getFilteredStudents(searchA);
     const filteredStudentsB = getFilteredStudents(searchB);
@@ -2813,6 +2930,75 @@ export default function AllocationPage() {
                             </div>
                         </div>
 
+                        {/* [V1.8] AI 스마트 해결사 통합 대시보드 배너 */}
+                        <div style={{
+                            marginBottom: '1.5rem',
+                            padding: '1.25rem',
+                            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(168, 85, 247, 0.1) 100%)',
+                            border: '1px solid rgba(99, 102, 241, 0.2)',
+                            borderRadius: '12px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            boxShadow: '0 4px 15px rgba(0, 0, 0, 0.1)'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                <div style={{
+                                    width: '42px',
+                                    height: '42px',
+                                    borderRadius: '10px',
+                                    background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '1.25rem',
+                                    boxShadow: '0 4px 10px rgba(99, 102, 241, 0.3)'
+                                }}>
+                                    🤖
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#e0e7ff', marginBottom: '0.2rem' }}> AI 스마트 해결사 </div>
+                                    <div style={{ fontSize: '0.8rem', color: 'rgba(224, 231, 255, 0.7)' }}>
+                                        {allViolations.length > 0
+                                            ? `현재 ${allViolations.length}개의 위반 항목이 감지되었습니다. AI가 최적의 해결책을 제안합니다.`
+                                            : aiOptimizationTip
+                                                ? `✨ 추천 최적화: ${aiOptimizationTip.description}`
+                                                : "배정 규칙이 모두 지켜졌습니다! 미세 균형을 더 완벽하게 맞출 수 있습니다."
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleAiRecommendation}
+                                disabled={false}
+                                style={{
+                                    padding: '0.6rem 1.25rem',
+                                    background: allViolations.length === 0 ? '#8b5cf6' : 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '8px',
+                                    fontSize: '0.85rem',
+                                    fontWeight: 'bold',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)'
+                                }}
+                                onMouseEnter={(e) => {
+                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                    e.currentTarget.style.filter = 'brightness(1.1)';
+                                }}
+                                onMouseLeave={(e) => {
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                    e.currentTarget.style.filter = 'brightness(1)';
+                                }}
+                            >
+                                {allViolations.length === 0 ? '✨ 미세 최적화 실행' : '🤖 스마트 해결사 열기'}
+                            </button>
+                        </div>
+
                         {allViolations.length > 0 ? (
                             <div style={{
                                 display: 'grid',
@@ -2848,6 +3034,8 @@ export default function AllocationPage() {
                                             borderRadius: '10px',
                                             cursor: v.studentIds.length > 0 ? 'pointer' : 'default',
                                             transition: 'all 0.2s',
+                                            position: 'relative',
+                                            overflow: 'hidden'
                                         }}
                                         onMouseEnter={(e) => {
                                             if (v.studentIds.length > 0) {
@@ -2869,18 +3057,20 @@ export default function AllocationPage() {
                                             background: v.type === 'sep' ? 'rgba(239, 68, 68, 0.1)' :
                                                 v.type === 'bind' ? 'rgba(16, 185, 129, 0.1)' :
                                                     v.type === 'imbalance' as any ? 'rgba(234, 179, 8, 0.1)' :
-                                                        'rgba(245, 158, 11, 0.1)',
+                                                        v.type === 'optimization' as any ? 'rgba(139, 92, 246, 0.1)' :
+                                                            'rgba(245, 158, 11, 0.1)',
                                             display: 'flex',
                                             alignItems: 'center',
                                             justifyContent: 'center',
                                             color: v.type === 'sep' ? '#ef4444' :
                                                 v.type === 'bind' ? '#10b981' :
                                                     v.type === 'imbalance' as any ? '#eab308' :
-                                                        '#f59e0b',
+                                                        v.type === 'optimization' as any ? '#a78bfa' :
+                                                            '#f59e0b',
                                             fontSize: '14px',
                                             flexShrink: 0
                                         }}>
-                                            {v.type === 'sep' ? '🚫' : v.type === 'bind' ? '🔗' : v.type === 'imbalance' as any ? '⚖️' : '👥'}
+                                            {v.type === 'sep' ? '🚫' : v.type === 'bind' ? '🔗' : v.type === 'imbalance' as any ? '⚖️' : v.type === 'optimization' as any ? '✨' : '👥'}
                                         </div>
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div style={{
@@ -2891,6 +3081,7 @@ export default function AllocationPage() {
                                                 {v.message}
                                             </div>
                                         </div>
+
                                         {v.studentIds.length > 0 && (v.type as string) !== 'imbalance' && (
                                             <div style={{ color: '#6366f1', fontSize: '0.7rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
                                                 이동 ➔
@@ -4623,6 +4814,221 @@ export default function AllocationPage() {
                     });
                 })()}
             </div>
+
+            {/* AI 추천 모달 */}
+            {showAiModal && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    background: 'rgba(15, 23, 42, 0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    zIndex: 2000, backdropFilter: 'blur(10px)'
+                }} onClick={() => setShowAiModal(false)}>
+                    <div className="card" style={{
+                        maxWidth: '600px',
+                        width: '95%',
+                        maxHeight: '90vh',
+                        overflow: 'auto',
+                        padding: '2rem',
+                        background: 'rgba(30, 41, 59, 0.95)',
+                        border: '1px solid rgba(99, 102, 241, 0.3)',
+                        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+                    }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{
+                            marginBottom: '2rem',
+                            textAlign: 'center'
+                        }}>
+                            <div style={{
+                                width: '60px',
+                                height: '60px',
+                                borderRadius: '16px',
+                                background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '2rem',
+                                margin: '0 auto 1rem',
+                                boxShadow: '0 8px 16px rgba(99, 102, 241, 0.4)'
+                            }}>🤖</div>
+                            <h2 style={{ margin: 0, fontSize: '1.75rem', fontWeight: '800', color: 'white' }}>
+                                AI 스마트 해결사 추천
+                            </h2>
+                            <p style={{ color: 'rgba(224, 231, 255, 0.7)', marginTop: '0.5rem' }}>
+                                감지된 문제들의 최적 해결책을 제안합니다.
+                            </p>
+                        </div>
+
+                        {aiSolutions.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔍</div>
+                                해결 가능한 방법을 찾지 못했습니다.<br />
+                                수동으로 학생을 교환해보세요.
+                            </div>
+                        ) : (
+                            <>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginBottom: '2rem' }}>
+                                    {aiSolutions.map((solution, idx) => (
+                                        <div key={idx} style={{
+                                            padding: '1.75rem',
+                                            background: selectedSolutions.has(idx) ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                                            borderRadius: '20px',
+                                            border: `2px solid ${selectedSolutions.has(idx) ? '#6366f1' : 'rgba(255, 255, 255, 0.08)'}`,
+                                            cursor: 'pointer',
+                                            transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'center',
+                                            textAlign: 'center',
+                                            boxShadow: selectedSolutions.has(idx) ? '0 10px 30px rgba(99, 102, 241, 0.25)' : 'none',
+                                            position: 'relative',
+                                            overflow: 'hidden'
+                                        }} onClick={() => toggleSolution(idx)}>
+                                            {/* 선택 체크 박스 대신 세련된 인디케이터 */}
+                                            <div style={{
+                                                position: 'absolute',
+                                                top: '1rem',
+                                                right: '1rem',
+                                                width: '24px',
+                                                height: '24px',
+                                                borderRadius: '50%',
+                                                border: `2px solid ${selectedSolutions.has(idx) ? '#6366f1' : 'rgba(255, 255, 255, 0.2)'}`,
+                                                background: selectedSolutions.has(idx) ? '#6366f1' : 'transparent',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                color: 'white',
+                                                fontSize: '0.75rem'
+                                            }}>
+                                                {selectedSolutions.has(idx) && '✓'}
+                                            </div>
+
+                                            <div style={{
+                                                background: 'rgba(239, 68, 68, 0.15)',
+                                                color: '#f87171',
+                                                padding: '0.4rem 1rem',
+                                                borderRadius: '30px',
+                                                fontSize: '0.85rem',
+                                                fontWeight: 'bold',
+                                                marginBottom: '1rem',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '0.4rem'
+                                            }}>
+                                                ⚠️ {solution.issue.description.split(':')[0]}
+                                            </div>
+
+                                            <div style={{ fontSize: '1.1rem', fontWeight: '700', color: 'white', marginBottom: '1.25rem' }}>
+                                                {solution.issue.description.includes(':') ? solution.issue.description.split(':')[1].trim() : solution.issue.description}
+                                            </div>
+
+                                            <div style={{
+                                                width: '100%',
+                                                padding: '1.25rem',
+                                                background: 'rgba(16, 185, 129, 0.08)',
+                                                borderRadius: '16px',
+                                                border: '1px solid rgba(16, 185, 129, 0.2)',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                alignItems: 'center',
+                                                gap: '0.75rem'
+                                            }}>
+                                                <div style={{ fontSize: '0.9rem', color: '#10b981', fontWeight: 'bold' }}>
+                                                    ✨ 기대 효과: {solution.explanation}
+                                                </div>
+
+                                                <div style={{
+                                                    fontSize: '1rem',
+                                                    color: 'white',
+                                                    lineHeight: '1.6',
+                                                    fontWeight: '500',
+                                                    paddingBottom: '0.75rem',
+                                                    borderBottom: '1px solid rgba(255,255,255,0.1)',
+                                                    width: '100%'
+                                                }}>
+                                                    <span style={{ color: '#818cf8', fontWeight: '700' }}>{solution.studentA.name}</span>({solution.fromClass}반) <span style={{ color: 'rgba(255,255,255,0.4)', margin: '0 0.5rem' }}>↔</span> <span style={{ color: '#818cf8', fontWeight: '700' }}>{solution.studentB.name}</span>({solution.toClass}반)
+                                                </div>
+
+                                                {solution.outcomes && (
+                                                    <div style={{
+                                                        width: '100%',
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        gap: '0.5rem',
+                                                        paddingTop: '0.5rem'
+                                                    }}>
+                                                        <div style={{ fontSize: '0.8rem', color: 'rgba(224, 231, 255, 0.5)', fontWeight: 'bold' }}>📍 교환 시 예상되는 결과</div>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', textAlign: 'left' }}>
+                                                            <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.8)' }}>
+                                                                <div style={{ color: 'rgba(129, 140, 248, 0.8)', fontSize: '0.75rem', marginBottom: '0.2rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                                                    👥 기존 반 분산 <span style={{ fontSize: '0.7rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.1)', padding: '1px 4px', borderRadius: '4px' }}>추천</span>
+                                                                </div>
+                                                                <div style={{ lineHeight: '1.4', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between' }}>
+                                                                    <span>{solution.outcomes.prevClass.from}</span>
+                                                                    <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.7rem' }}>[{solution.outcomes.prevClass.fromAvg}]</span>
+                                                                </div>
+                                                                <div style={{ lineHeight: '1.4', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between' }}>
+                                                                    <span>{solution.outcomes.prevClass.to}</span>
+                                                                    <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.7rem' }}>[{solution.outcomes.prevClass.toAvg}]</span>
+                                                                </div>
+                                                            </div>
+                                                            <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.8)' }}>
+                                                                <div style={{ color: 'rgba(129, 140, 248, 0.8)', fontSize: '0.75rem', marginBottom: '0.2rem', display: 'flex', justifyContent: 'space-between' }}>
+                                                                    <span>성비 및 인원</span>
+                                                                    <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.7rem' }}>[{solution.outcomes.gender.avg}]</span>
+                                                                </div>
+                                                                <div style={{ lineHeight: '1.4', fontSize: '0.8rem' }}>{solution.outcomes.gender.from.split('반')[1]} ({solution.outcomes.size.from.split('명')[0].split(' ')[2]}명)</div>
+                                                                <div style={{ lineHeight: '1.4', fontSize: '0.8rem' }}>{solution.outcomes.gender.to.split('반')[1]} ({solution.outcomes.size.to.split('명')[0].split(' ')[2]}명)</div>
+                                                            </div>
+                                                        </div>
+                                                        <div style={{
+                                                            fontSize: '0.75rem',
+                                                            color: 'rgba(16, 185, 129, 0.7)',
+                                                            marginTop: '0.4rem',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '0.3rem',
+                                                            background: 'rgba(16, 185, 129, 0.05)',
+                                                            padding: '0.4rem 0.8rem',
+                                                            borderRadius: '8px',
+                                                            border: '1px dashed rgba(16, 185, 129, 0.2)'
+                                                        }}>
+                                                            ✨ 성적(평균 {solution.outcomes.rank.from.split('→')[1]}) 및 다른 제약은 안전하게 유지됩니다.
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                                    <button
+                                        className="btn-secondary"
+                                        onClick={() => setShowAiModal(false)}
+                                        style={{ padding: '0.8rem 2rem', borderRadius: '12px' }}
+                                    >
+                                        나중에 하기
+                                    </button>
+                                    <button
+                                        className="btn-primary"
+                                        onClick={applySelectedSolutions}
+                                        disabled={selectedSolutions.size === 0}
+                                        style={{
+                                            padding: '0.8rem 2.5rem',
+                                            borderRadius: '12px',
+                                            background: selectedSolutions.size === 0 ? 'rgba(99, 102, 241, 0.4)' : 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                                            opacity: selectedSolutions.size === 0 ? 1 : 1,
+                                            cursor: selectedSolutions.size === 0 ? 'not-allowed' : 'pointer',
+                                            boxShadow: selectedSolutions.size === 0 ? 'none' : '0 10px 20px rgba(99, 102, 241, 0.3)'
+                                        }}
+                                    >
+                                        선택한 교환 적용하기 ({selectedSolutions.size})
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
         </div>
     );
 }
