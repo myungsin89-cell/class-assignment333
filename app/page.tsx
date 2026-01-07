@@ -118,7 +118,8 @@ export default function Home() {
               padding: '1rem',
               fontSize: '1.1rem',
               fontWeight: 600,
-              marginBottom: '1.5rem'
+              marginBottom: '1.5rem',
+              justifyContent: 'center'
             }}
             disabled={loading}
           >
@@ -150,7 +151,8 @@ export default function Home() {
             style={{
               width: '100%',
               padding: '0.875rem',
-              marginBottom: '0.75rem'
+              marginBottom: '0.75rem',
+              justifyContent: 'center'
             }}
           >
             학교 등록하기

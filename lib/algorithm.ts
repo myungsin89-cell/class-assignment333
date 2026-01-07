@@ -308,9 +308,9 @@ function optimizeAllocation(
 
                 for (const s1 of s1List) {
                     for (const s2 of s2List) {
-                        // 같은 성별끼리 인원수 조절을 위한 스왑은 나중에
-                        // 여기서는 성비 불균형 해소를 위한 성별 다른 스왑 위주
-                        if (normalizeGender(s1.gender) === normalizeGender(s2.gender)) continue;
+                        // 성별이 같은 학생끼리도 스왑을 허용하여 기존반 쏠림, 성적 불균형 등을 개선합니다.
+                        // 단, 성비 자체는 변하지 않으므로 성비 불균형을 악화시키지 않습니다.
+                        // if (normalizeGender(s1.gender) === normalizeGender(s2.gender)) continue; (삭제됨)
 
                         // 현재 상태 벌점
                         const currentSizes = Array.from({ length: classCount }, (_, i) =>
@@ -619,6 +619,27 @@ export function calculateViolationScore(result: AllocationResult): number {
         score += rankDiff * 100; // 기초 페널티
         if (rankDiff > 5.0) score += (rankDiff - 5.0) * 1000;
     }
+
+    // 5. 기존반 성별 쏠림 (2명 이상인데 모두 같은 성별인 경우)
+    result.classes.forEach(cls => {
+        const originMap = new Map<number, Student[]>();
+        cls.students.filter(s => !s.is_transferring_out).forEach(s => {
+            const origin = s.section_number || 0;
+            if (origin === 0) return;
+            if (!originMap.has(origin)) originMap.set(origin, []);
+            originMap.get(origin)!.push(s);
+        });
+
+        originMap.forEach((students) => {
+            if (students.length >= 2) {
+                const males = students.filter(s => s.gender === 'M').length;
+                const females = students.filter(s => s.gender === 'F').length;
+                if ((males > 0 && females === 0) || (females > 0 && males === 0)) {
+                    score += students.length * 2000;
+                }
+            }
+        });
+    });
 
     return score;
 }

@@ -1609,24 +1609,80 @@ export default function AllocationPage() {
     };
 
     // 선택된 솔루션 적용
+    // 선택된 솔루션 적용 (일괄 처리)
     const applySelectedSolutions = () => {
         if (selectedSolutions.size === 0) {
             setToast({ message: '적용할 솔루션을 선택해주세요', type: 'error' });
             return;
         }
 
-        // 선택된 솔루션 적용
+        if (!allocation) return;
+
+        // 1. 배정 상태 복제 (Batch Update를 위해)
+        const newAllocation = JSON.parse(JSON.stringify(allocation)) as typeof allocation;
+        const newHistory = [...swapHistory];
         const solutionsToApply = Array.from(selectedSolutions)
             .map(idx => aiSolutions[idx])
             .filter(Boolean);
 
+        let appliedCount = 0;
+
         solutionsToApply.forEach(solution => {
-            performSwap(solution.studentA, solution.studentB);
+            // 학생 찾기 헬퍼
+            const findStudentClassIdx = (sId: number) => newAllocation.classes.findIndex(c => c.students.some(s => s.id === sId));
+
+            // A. 기본 1:1 교환 (또는 대표 교환)
+            const idxA = findStudentClassIdx(solution.studentA.id);
+            const idxB = findStudentClassIdx(solution.studentB.id);
+
+            if (idxA !== -1 && idxB !== -1) {
+                // A반에서 학생A 제거, B반에 추가
+                newAllocation.classes[idxA].students = newAllocation.classes[idxA].students.filter(s => s.id !== solution.studentA.id);
+                newAllocation.classes[idxB].students.push(solution.studentA);
+
+                // B반에서 학생B 제거, A반에 추가
+                newAllocation.classes[idxB].students = newAllocation.classes[idxB].students.filter(s => s.id !== solution.studentB.id);
+                newAllocation.classes[idxA].students.push(solution.studentB);
+
+                newHistory.unshift({ studentA: solution.studentA, studentB: solution.studentB, timestamp: Date.now() });
+            }
+
+            // B. 추가 이동 (복합 교환)
+            if (solution.additionalTransfers) {
+                solution.additionalTransfers.forEach(transfer => {
+                    const currentIdx = findStudentClassIdx(transfer.student.id);
+                    const targetIdx = transfer.toClass - 1; // 0-based index
+
+                    if (currentIdx !== -1 && targetIdx !== -1) {
+                        // 현재 반에서 제거
+                        newAllocation.classes[currentIdx].students = newAllocation.classes[currentIdx].students.filter(s => s.id !== transfer.student.id);
+                        // 목표 반에 추가
+                        newAllocation.classes[targetIdx].students.push(transfer.student);
+
+                        // 이동 기록 (단독 이동인 경우 studentB는 undefined)
+                        newHistory.unshift({ studentA: transfer.student, originSectionIndex: currentIdx, targetSectionIndex: targetIdx, timestamp: Date.now() });
+                    }
+                });
+            }
+            appliedCount++;
         });
 
+        // 통계 재계산 (모든 반 대상)
+        newAllocation.classes.forEach(cls => {
+            cls.gender_stats.male = cls.students.filter(s => s.gender === 'M').length;
+            cls.gender_stats.female = cls.students.filter(s => s.gender === 'F').length;
+            cls.special_factors.problem = cls.students.filter(s => s.is_problem_student).length;
+            cls.special_factors.special = cls.students.filter(s => s.is_special_class).length;
+            cls.special_factors.underachiever = cls.students.filter(s => s.is_underachiever).length;
+            cls.special_factors.transfer = cls.students.filter(s => s.is_transferring_out).length;
+        });
+
+        // 상태 업데이트
+        setAllocation(newAllocation);
+        setSwapHistory(newHistory);
         setShowAiModal(false);
         setToast({
-            message: `${solutionsToApply.length}개의 교환이 적용되었습니다`,
+            message: `${appliedCount}개의 솔루션이 적용되었습니다`,
             type: 'success'
         });
     };
@@ -4946,6 +5002,32 @@ export default function AllocationPage() {
                                                     <span style={{ color: '#818cf8', fontWeight: '700' }}>{solution.studentA.name}</span>({solution.fromClass}반) <span style={{ color: 'rgba(255,255,255,0.4)', margin: '0 0.5rem' }}>↔</span> <span style={{ color: '#818cf8', fontWeight: '700' }}>{solution.studentB.name}</span>({solution.toClass}반)
                                                 </div>
 
+                                                {/* 복합 교환 추가 설명 영역 */}
+                                                {solution.complexSwapType && solution.additionalTransfers && (
+                                                    <div style={{
+                                                        width: '100%',
+                                                        padding: '0.75rem',
+                                                        background: 'rgba(59, 130, 246, 0.1)',
+                                                        borderRadius: '8px',
+                                                        marginBottom: '0.5rem',
+                                                        border: '1px solid rgba(59, 130, 246, 0.3)'
+                                                    }}>
+                                                        <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: '#60a5fa', marginBottom: '0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                            🔄 {solution.complexSwapType === '2:1' ? '2:1 트레이드 상세' : '3자간 순환 교환'}
+                                                        </div>
+                                                        <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.85rem', color: 'rgba(255,255,255,0.9)', textAlign: 'left' }}>
+                                                            <li>
+                                                                <span style={{ color: '#e0e7ff' }}>기본:</span> {solution.studentA.name}({solution.fromClass}반) ↔ {solution.studentB.name}({solution.toClass}반)
+                                                            </li>
+                                                            {solution.additionalTransfers.map((t, tIdx) => (
+                                                                <li key={tIdx} style={{ marginTop: '0.2rem' }}>
+                                                                    <span style={{ color: '#93c5fd' }}>추가:</span> {t.student.name} ({t.fromClass}반 ➡️ {t.toClass}반)
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    </div>
+                                                )}
+
                                                 {solution.outcomes && (
                                                     <div style={{
                                                         width: '100%',
@@ -4960,14 +5042,20 @@ export default function AllocationPage() {
                                                                 <div style={{ color: 'rgba(129, 140, 248, 0.8)', fontSize: '0.75rem', marginBottom: '0.2rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                                                                     👥 기존 반 분산 <span style={{ fontSize: '0.7rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.1)', padding: '1px 4px', borderRadius: '4px' }}>추천</span>
                                                                 </div>
-                                                                <div style={{ lineHeight: '1.4', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between' }}>
-                                                                    <span>{solution.outcomes.prevClass.from}</span>
-                                                                    <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.7rem' }}>[{solution.outcomes.prevClass.fromAvg}]</span>
-                                                                </div>
-                                                                <div style={{ lineHeight: '1.4', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between' }}>
-                                                                    <span>{solution.outcomes.prevClass.to}</span>
-                                                                    <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.7rem' }}>[{solution.outcomes.prevClass.toAvg}]</span>
-                                                                </div>
+                                                                {solution.outcomes.prevClass ? (
+                                                                    <>
+                                                                        <div style={{ lineHeight: '1.4', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between' }}>
+                                                                            <span>{solution.outcomes.prevClass.from}</span>
+                                                                            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.7rem' }}>[{solution.outcomes.prevClass.fromAvg}]</span>
+                                                                        </div>
+                                                                        <div style={{ lineHeight: '1.4', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between' }}>
+                                                                            <span>{solution.outcomes.prevClass.to}</span>
+                                                                            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.7rem' }}>[{solution.outcomes.prevClass.toAvg}]</span>
+                                                                        </div>
+                                                                    </>
+                                                                ) : (
+                                                                    <div style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.4)' }}>통계 정보 없음</div>
+                                                                )}
                                                             </div>
                                                             <div style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.8)' }}>
                                                                 <div style={{ color: 'rgba(129, 140, 248, 0.8)', fontSize: '0.75rem', marginBottom: '0.2rem', display: 'flex', justifyContent: 'space-between' }}>

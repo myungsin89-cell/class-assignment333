@@ -13,6 +13,7 @@ export type IssueType =
     | 'size_imbalance'
     | 'special_imbalance'
     | 'previous_class_imbalance'
+    | 'origin_gender_imbalance' // 기존반 특정 성별 쏠림 (한 성별만 존재)
     | 'rank_imbalance'
     | 'optimization'; // 최적화 여지 (전체 균형)
 
@@ -34,14 +35,20 @@ export interface SwapSolution {
     scoreImprovement: number;
     newIssues: Issue[];
     explanation?: string; // 추천 이유 및 효과 설명
+
+    // 복합 교환을 위한 추가 필드
+    complexSwapType?: '2:1' | 'triangle';
+    subDescription?: string; // 복합 교환 상세 설명 (예: "A->B: 2명, B->A: 1명")
+    additionalTransfers?: {
+        student: Student;
+        fromClass: number;
+        toClass: number;
+    }[];
     outcomes?: {
         gender: { from: string; to: string; avg: string };
         size: { from: string; to: string };
         rank: { from: string; to: string; avg: string };
-        prevClass: {
-            from: string; fromAvg: string;
-            to: string; toAvg: string;
-        };
+        prevClass?: { from: string; fromAvg: string; to: string; toAvg: string };
     };
 }
 
@@ -339,6 +346,38 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
         });
     }
 
+
+
+    // 5. 기존반 성별 쏠림 (기존반 배분에서 특정 성별이 한명도 없으면)
+    allocation.classes.forEach((cls, idx) => {
+        const originMap = new Map<number, Student[]>();
+        cls.students.filter(s => !s.is_transferring_out).forEach(s => {
+            const origin = s.section_number || 0;
+            if (origin === 0) return;
+            if (!originMap.has(origin)) originMap.set(origin, []);
+            originMap.get(origin)!.push(s);
+        });
+
+        originMap.forEach((students, origin) => {
+            if (students.length >= 2) {
+                const males = students.filter(s => s.gender === 'M').length;
+                const females = students.filter(s => s.gender === 'F').length;
+
+                // 해당 기존반 출신이 2명 이상인데, 한쪽 성별만 있는 경우
+                if ((males > 0 && females === 0) || (females > 0 && males === 0)) {
+                    issues.push({
+                        type: 'origin_gender_imbalance',
+                        severity: students.length * 2000,
+                        description: `${idx + 1}반에 배정된 기존 ${origin}반 학생 ${students.length}명 모두가 ${males > 0 ? '남학생' : '여학생'}입니다.`,
+                        affectedClasses: [idx + 1],
+                        studentIds: students.map(s => s.id),
+                        details: { origin, students, gender: males > 0 ? 'M' : 'F' }
+                    });
+                }
+            }
+        });
+    });
+
     return issues.sort((a, b) => b.severity - a.severity);
 }
 
@@ -491,6 +530,10 @@ export function findSwapSolutions(
                                 const pA = classAAfter.students.filter(s => (s.section_number || 1) === prevNum && !s.is_transferring_out).length;
                                 const pB = classBAfter.students.filter(s => (s.section_number || 1) === prevNum && !s.is_transferring_out).length;
                                 explanation = `기존 ${prevNum}반 학생 쏠림을 해결합니다. 교환 후 ${fromName}(${pA}명), ${toName}(${pB}명)으로 적절히 분산됩니다.`;
+
+                            } else if (issue.type === 'origin_gender_imbalance') {
+                                const prevNum = issue.details.origin;
+                                explanation = `기존 ${prevNum}반 학생들의 성별 쏠림을 완화합니다. 다른 성별의 학생을 포함시켜 균형을 맞춥니다.`;
                             } else if (issue.type === 'rank_imbalance') {
                                 const avgA = classAAfter.students.filter(s => s.rank && !s.is_transferring_out).reduce((a, b) => a + (b.rank || 0), 0) / (classAAfter.students.filter(s => s.rank && !s.is_transferring_out).length || 1);
                                 const avgB = classBAfter.students.filter(s => s.rank && !s.is_transferring_out).reduce((a, b) => a + (b.rank || 0), 0) / (classBAfter.students.filter(s => s.rank && !s.is_transferring_out).length || 1);
@@ -578,7 +621,201 @@ export function findSwapSolutions(
         );
     });
 
-    return solutions.slice(0, topN * issues.length);
+    // 복합 교환 탐색 (추가)
+    const complexSolutions = findComplexSwapSolutions(allocation, issues, topN);
+    solutions.push(...complexSolutions);
+
+    return solutions.slice(0, topN * issues.length + 5); // 조금 더 여유있게 반환
+}
+
+// ----------------------------------------------------
+// 복합 교환 시뮬레이션 (2:1, 3-way)
+// ----------------------------------------------------
+
+export function findComplexSwapSolutions(
+    allocation: AllocationResult,
+    issues: Issue[],
+    topN: number = 2
+): SwapSolution[] {
+    const solutions: SwapSolution[] = [];
+    const currentScore = calculateViolationScore(allocation);
+    const numClasses = allocation.classes.length;
+
+    // 전체 통계 (설명용)
+    const allStudents = allocation.classes.flatMap(c => c.students.filter(s => !s.is_transferring_out));
+    const totalMales = allStudents.filter(s => s.gender === 'M').length;
+    const totalFemales = allStudents.filter(s => s.gender === 'F').length;
+    const avgMale = (totalMales / numClasses).toFixed(1);
+    const avgFemale = (totalFemales / numClasses).toFixed(1);
+
+    // 심각한 이슈들만 대상으로 복합 해결책 탐색 (성능 고려)
+    const criticalIssues = issues.filter(i => i.severity >= 5000 || i.type === 'origin_gender_imbalance');
+
+    criticalIssues.forEach(issue => {
+        const affectedClassIdx = issue.affectedClasses[0] - 1;
+        const affectedClass = allocation.classes[affectedClassIdx];
+
+        // 1. [2:1 트레이드] 
+        // 문제 반에서 2명을 보내고 1명을 받아오거나, 1명을 보내고 2명을 받아오는 시나리오
+        // 주로 인원 불균형이나, 쏠림 해소를 위해 사용됨
+        allocation.classes.forEach((otherClass, otherIdx) => {
+            if (otherIdx === affectedClassIdx) return;
+
+            // Case A: 문제 반(A)에서 2명 -> 상대 반(B)에서 1명 (A 인원 -1 효과)
+            // (A반이 과밀하거나, 특정 그룹이 쏠려있을 때 유효)
+            const candidatesA = affectedClass.students.slice(0, 10); // 성능상 상위 10명만 샘플링 (실제론 더 정교한 타겟팅 필요)
+            const candidatesB = otherClass.students.slice(0, 10);
+
+            candidatesA.forEach((sA1, i) => {
+                candidatesA.slice(i + 1).forEach(sA2 => {
+                    candidatesB.forEach(sB => {
+                        // 시뮬레이션
+                        const simResult = simulateMultiSwap(allocation, [sA1, sA2], [sB], affectedClassIdx, otherIdx);
+                        evaluateAndAddSolution(
+                            simResult, currentScore, issue, solutions,
+                            { type: '2:1', sA: sA1, sA2: sA2, sB: sB, idxA: affectedClassIdx, idxB: otherIdx },
+                            { avgMale, avgFemale, allocation, numClasses }
+                        );
+                    });
+                });
+            });
+        });
+
+        // 2. [3각 트레이드] (Triangle Swap)
+        // A -> B, B -> C, C -> A
+        // 1:1 교환의 Deadlock을 해결
+        allocation.classes.forEach((classB, idxB) => {
+            if (idxB === affectedClassIdx) return;
+            allocation.classes.forEach((classC, idxC) => {
+                if (idxC === affectedClassIdx || idxC === idxB) return;
+
+                const candidatesA = affectedClass.students.slice(0, 5);
+                const candidatesB = classB.students.slice(0, 5);
+                const candidatesC = classC.students.slice(0, 5);
+
+                candidatesA.forEach(sA => {
+                    candidatesB.forEach(sB => {
+                        candidatesC.forEach(sC => {
+                            const simResult = simulateTriangleSwap(allocation, sA, sB, sC, affectedClassIdx, idxB, idxC);
+                            evaluateAndAddSolution(
+                                simResult, currentScore, issue, solutions,
+                                { type: 'triangle', sA, sB, sC, idxA: affectedClassIdx, idxB: idxB, idxC: idxC },
+                                { avgMale, avgFemale, allocation, numClasses }
+                            );
+                        });
+                    });
+                });
+            });
+        });
+    });
+
+    return solutions.sort((a, b) => b.scoreImprovement - a.scoreImprovement).slice(0, topN);
+}
+
+// 헬퍼: 솔루션 평가 및 등록
+function evaluateAndAddSolution(
+    simResult: AllocationResult,
+    currentScore: number,
+    issue: Issue,
+    solutions: SwapSolution[],
+    context: any,
+    stats: any
+) {
+    const newScore = calculateViolationScore(simResult);
+    const improvement = currentScore - newScore;
+
+    if (improvement > 2000) { // 유의미한 개선만
+        const newIssues = detectIssues(simResult);
+        // 설명 및 통계 생성 로직 (약식)
+        // ... 실제 구현 시 상세 내용을 채워넣어야 함
+
+        if (context.type === '2:1') {
+            solutions.push({
+                issue,
+                studentA: context.sA,
+                studentB: context.sB,
+                fromClass: context.idxA + 1,
+                toClass: context.idxB + 1,
+                scoreImprovement: improvement,
+                newIssues,
+                explanation: `[2:1 교환] ${context.sA.name}, ${context.sA2.name} ➡️ ${context.idxB + 1}반 / ${context.sB.name} ⬅️ ${context.idxA + 1}반`,
+                complexSwapType: '2:1',
+                additionalTransfers: [
+                    { student: context.sA2, fromClass: context.idxA + 1, toClass: context.idxB + 1 },
+                ],
+                // outcomes: ... (생략, 필요시 추가)
+            });
+        } else if (context.type === 'triangle') {
+            solutions.push({
+                issue,
+                studentA: context.sA,
+                studentB: context.sB, // 대표 표시용
+                fromClass: context.idxA + 1,
+                toClass: context.idxB + 1, // A -> B
+                scoreImprovement: improvement,
+                newIssues,
+                explanation: `[삼각 교환] ${context.sA.name}→${context.idxB + 1}반, ${context.sB.name}→${context.idxC + 1}반, ${context.sC.name}→${context.idxA + 1}반`,
+                complexSwapType: 'triangle',
+                additionalTransfers: [
+                    { student: context.sB, fromClass: context.idxB + 1, toClass: context.idxC + 1 },
+                    { student: context.sC, fromClass: context.idxC + 1, toClass: context.idxA + 1 }
+                ]
+            });
+        }
+    }
+}
+
+
+function simulateMultiSwap(
+    allocation: AllocationResult,
+    studentsFromA: Student[],
+    studentsFromB: Student[],
+    classAIdx: number,
+    classBIdx: number
+): AllocationResult {
+    const simulated: AllocationResult = {
+        classId: allocation.classId,
+        classes: allocation.classes.map((cls, idx) => {
+            if (idx === classAIdx) {
+                let newStudents = cls.students.filter(s => !studentsFromA.some(rm => rm.id === s.id));
+                newStudents = newStudents.concat(studentsFromB);
+                return { ...cls, students: newStudents };
+            } else if (idx === classBIdx) {
+                let newStudents = cls.students.filter(s => !studentsFromB.some(rm => rm.id === s.id));
+                newStudents = newStudents.concat(studentsFromA);
+                return { ...cls, students: newStudents };
+            }
+            return cls;
+        })
+    };
+    return simulated;
+}
+
+function simulateTriangleSwap(
+    allocation: AllocationResult,
+    sA: Student,
+    sB: Student,
+    sC: Student,
+    idxA: number,
+    idxB: number,
+    idxC: number
+): AllocationResult {
+    return {
+        classId: allocation.classId,
+        classes: allocation.classes.map((cls, idx) => {
+            if (idx === idxA) {
+                // A에서 sA 나가고, sC 들어옴
+                return { ...cls, students: cls.students.filter(s => s.id !== sA.id).concat(sC) };
+            } else if (idx === idxB) {
+                // B에서 sB 나가고, sA 들어옴
+                return { ...cls, students: cls.students.filter(s => s.id !== sB.id).concat(sA) };
+            } else if (idx === idxC) {
+                // C에서 sC 나가고, sB 들어옴
+                return { ...cls, students: cls.students.filter(s => s.id !== sC.id).concat(sB) };
+            }
+            return cls;
+        })
+    };
 }
 
 // 교환 시뮬레이션
