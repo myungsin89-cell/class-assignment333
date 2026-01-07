@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
 
         // 기존 클래스 정보 가져오기
         const classInfoResult = await sql`SELECT * FROM classes WHERE id = ${classId} AND school_id = ${schoolId}`;
-        const classInfo = classInfoResult[0] as Record<string, unknown> | undefined;
+        const classInfo = classInfoResult[0] as { grade: number;[key: string]: any } | undefined;
 
         if (!classInfo) {
             return NextResponse.json({ error: 'Class not found' }, { status: 404 });
@@ -297,7 +297,7 @@ export async function POST(request: NextRequest) {
         for (const [sectionIndex, sectionStudents] of sections.entries()) {
             for (const student of sectionStudents) {
                 await sql`INSERT INTO students (class_id, section_number, name, gender, is_problem_student, is_special_class, group_name, rank, previous_section)
-                         VALUES (${newClassId}, ${sectionIndex + 1}, ${student.name}, ${student.gender}, ${student.is_problem_student}, ${student.is_special_class}, ${student.group_name}, ${student.rank}, ${student.section_number})`;
+                         VALUES (${newClassId}, ${sectionIndex + 1}, ${student.name}, ${student.gender}, ${student.is_problem_student}, ${student.is_special_class}, ${student.group_name}, ${student.rank}, ${student.section_number ?? null})`;
             }
         }
 

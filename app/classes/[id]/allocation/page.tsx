@@ -1699,10 +1699,13 @@ export default function AllocationPage() {
     const getRecommendedStudents = () => {
         if (!studentA || !allocation) return [];
 
+        const isSpecialA = studentA.is_special_class || studentA.is_problem_student || studentA.is_underachiever;
+
         console.log('🔍 추천 로직 실행:', {
             studentA: studentA.name,
             section_number: studentA.section_number,
-            rank: studentA.rank
+            rank: studentA.rank,
+            isSpecial: isSpecialA
         });
 
         const classAIndex = allocation.classes.findIndex(c =>
@@ -1712,50 +1715,60 @@ export default function AllocationPage() {
         const candidates = allocation.classes
             .flatMap((c, idx) => idx !== classAIndex ? c.students : [])
             .filter(s => {
-                console.log(`  체크 중: ${s.name}, section_number=${s.section_number}, rank=${s.rank}, gender=${s.gender}`);
-
-                // 1. 원래 같은 반이었던 학생 (section_number가 같은)
-                if (!studentA.section_number || s.section_number !== studentA.section_number) {
-                    console.log(`    ❌ section_number 불일치`);
-                    return false;
-                }
-
-                // 2. 성별 일치
+                // 1. 공통: 성별 일치 (가능하면)
+                // 특수 학생의 경우에도 성비 균형이 중요하므로 유지 권장
                 if (s.gender !== studentA.gender) {
-                    console.log(`    ❌ 성별 불일치`);
                     return false;
                 }
 
-                // 3. 일반 학생만 추천 (특수 조건 학생 제외)
-                if (s.is_special_class || s.is_problem_student || s.is_underachiever || s.is_transferring_out) {
-                    console.log(`    ❌ 특별관리 대상 학생`);
-                    return false;
-                }
-
-                // 4. 분리/결합 조건이 있는 학생 제외
+                // 2. 분리/결합 조건이 있는 학생 제외 (복잡도 증가 방지)
                 const { sep, bind } = parseConstraints(s);
                 if (sep.length > 0 || bind.length > 0) {
-                    console.log(`    ❌ 분리/결합 조건 있음`);
                     return false;
                 }
 
-                // 5. 석차 차이 5등 이내
-                if (studentA.rank && s.rank) {
-                    const diff = Math.abs(studentA.rank - s.rank);
-                    if (diff <= 5) {
-                        console.log(`    ✅ 추천! 석차 차이: ${diff}`);
-                        return true;
-                    } else {
-                        console.log(`    ❌ 석차 차이 초과: ${diff}`);
-                        return false;
+                // --- [Case A: 특별관리 학생인 경우] ---
+                if (isSpecialA) {
+                    // 같은 유형의 특별관리 학생을 추천 (맞교환을 통해 반별 특수 학생 수 유지)
+
+                    // a. 특수교육대상
+                    if (studentA.is_special_class) {
+                        return s.is_special_class;
                     }
+                    // b. 문제행동학생
+                    else if (studentA.is_problem_student) {
+                        return s.is_problem_student;
+                    }
+                    // c. 학습부진학생
+                    else if (studentA.is_underachiever) {
+                        return s.is_underachiever;
+                    }
+
+                    return false; // 그 외의 경우는 추천 안 함
                 }
 
-                // 석차가 없는 경우는 제외
-                console.log(`    ❌ 석차 없음`);
-                return false;
+                // --- [Case B: 일반 학생인 경우 (기존 로직)] ---
+                else {
+                    // a. 특별관리 학생 제외
+                    if (s.is_special_class || s.is_problem_student || s.is_underachiever || s.is_transferring_out) {
+                        return false;
+                    }
+
+                    // b. 원래 같은 반이었던 학생만 추천 (section_number 불일치 시 제외)
+                    if (!studentA.section_number || s.section_number !== studentA.section_number) {
+                        return false;
+                    }
+
+                    // c. 석차 차이 5등 이내 (석차가 있는 경우)
+                    if (studentA.rank && s.rank) {
+                        const diff = Math.abs(studentA.rank - s.rank);
+                        return diff <= 5;
+                    }
+
+                    return false;
+                }
             })
-            .slice(0, 5);
+            .slice(0, 5); // 최대 5명
 
         console.log('📋 추천 결과:', candidates.length, '명');
         return candidates;
