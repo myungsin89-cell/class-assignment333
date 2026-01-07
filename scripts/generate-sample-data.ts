@@ -1,5 +1,5 @@
 import sql from '../lib/db';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { config } from 'dotenv';
 import { resolve } from 'path';
 
