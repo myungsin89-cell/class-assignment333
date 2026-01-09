@@ -911,7 +911,7 @@ export default function StudentsPage() {
                             style={{ fontSize: '0.9rem', padding: '0.5rem 1rem' }}
                             title="엑셀 템플릿 다운로드"
                         >
-                            📥 예시자료
+                            📄 엑셀 양식
                         </button>
 
                         {/* 파일 업로드 버튼 */}
@@ -939,53 +939,10 @@ export default function StudentsPage() {
                                 }}
                                 title="엑셀 파일 업로드"
                             >
-                                📂 파일 업로드
+                                📤 엑셀 업로드
                             </label>
                         </div>
 
-                        <div style={{ position: 'relative' }}>
-                            <button
-                                className="btn btn-secondary"
-                                onClick={() => setIsPasting(!isPasting)}
-                                disabled={isCompleted}
-                                style={{
-                                    fontSize: '0.9rem',
-                                    padding: '0.5rem 1rem',
-                                    background: isPasting ? 'var(--primary-light)' : undefined,
-                                    color: isPasting ? 'white' : undefined,
-                                    opacity: isCompleted ? 0.6 : 1,
-                                    cursor: isCompleted ? 'not-allowed' : 'pointer'
-                                }}
-                                title="엑셀 데이터 붙여넣기"
-                            >
-                                📋 엑셀 붙여넣기
-                            </button>
-                            {isPasting && (
-                                <div style={{
-                                    position: 'absolute',
-                                    top: '110%',
-                                    left: 0,
-                                    width: '300px',
-                                    padding: '1rem',
-                                    background: 'var(--bg-secondary)',
-                                    border: '1px solid var(--border)',
-                                    borderRadius: '8px',
-                                    zIndex: 10,
-                                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-                                }}>
-                                    <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--text-primary)', lineHeight: '1.4' }}>
-                                        엑셀에서 원하는 영역만 복사(Ctrl+C)해서<br />
-                                        여기서 붙여넣기(Ctrl+V) 하세요.<br />
-                                        <strong>* 번호나 이름이 같으면 기존 정보를 업데이트합니다.</strong><br />
-                                        <strong>* 번호와 이름이 모두 없으면 새로 추가합니다.</strong>
-                                    </p>
-                                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                        필수 필드: [성명], [성별] (권장: 생년월일, 비고)
-                                    </p>
-
-                                </div>
-                            )}
-                        </div>
 
                         <button
                             className="btn btn-secondary"
@@ -994,8 +951,6 @@ export default function StudentsPage() {
                             style={{
                                 fontSize: '0.9rem',
                                 padding: '0.5rem 1rem',
-                                border: '1px solid #94a3b8',
-                                color: '#475569',
                                 opacity: isCompleted ? 0.6 : 1,
                                 cursor: isCompleted ? 'not-allowed' : 'pointer',
                                 display: 'inline-flex',
