@@ -1758,77 +1758,75 @@ export default function AllocationPage() {
 
         const isSpecialA = studentA.is_special_class || studentA.is_problem_student || studentA.is_underachiever;
 
-        console.log('🔍 추천 로직 실행:', {
-            studentA: studentA.name,
-            section_number: studentA.section_number,
-            rank: studentA.rank,
-            isSpecial: isSpecialA
-        });
-
         const classAIndex = allocation.classes.findIndex(c =>
             c.students.some(s => s.id === studentA.id)
         );
 
-        const candidates = allocation.classes
+        // 후보군 추출 (성별이 같고 다른 반인 학생들 중 제약 조건이 없는 학생)
+        const allCandidates = allocation.classes
             .flatMap((c, idx) => idx !== classAIndex ? c.students : [])
             .filter(s => {
-                // 1. 공통: 성별 일치 (가능하면)
-                // 특수 학생의 경우에도 성비 균형이 중요하므로 유지 권장
-                if (s.gender !== studentA.gender) {
-                    return false;
-                }
+                // 성별 일치 필수
+                if (s.gender !== studentA.gender) return false;
 
-                // 2. 분리/결합 조건이 있는 학생 제외 (복잡도 증가 방지)
+                // 이미 고유한 분리/결합 그룹에 속한 학생은 추천에서 제외 (복잡한 제약 위반 방지)
                 const { sep, bind } = parseConstraints(s);
-                if (sep.length > 0 || bind.length > 0) {
-                    return false;
+                return sep.length === 0 && bind.length === 0;
+            });
+
+        // 1. 특별관리 학생 그룹 (studentA와 동일 유형)
+        const specialCandidates = allCandidates.filter(s => {
+            if (studentA.is_special_class) return s.is_special_class;
+            if (studentA.is_problem_student) return s.is_problem_student;
+            if (studentA.is_underachiever) return s.is_underachiever;
+            return false;
+        });
+
+        // 2. 일반 학생 그룹 (특별관리가 아닌 학생 중 성적 순 정렬)
+        const generalCandidates = allCandidates
+            .filter(s => !s.is_special_class && !s.is_problem_student && !s.is_underachiever && !s.is_transferring_out)
+            .sort((a, b) => {
+                // 석차 차이가 적은 순으로 정렬
+                if (studentA.rank && a.rank && b.rank) {
+                    const diffA = Math.abs(a.rank - studentA.rank);
+                    const diffB = Math.abs(b.rank - studentA.rank);
+                    return diffA - diffB;
                 }
+                // 석차가 없으면 기존 반이 같은 경우 우선
+                if (a.section_number === studentA.section_number && b.section_number !== studentA.section_number) return -1;
+                if (a.section_number !== studentA.section_number && b.section_number === studentA.section_number) return 1;
+                return 0;
+            });
 
-                // --- [Case A: 특별관리 학생인 경우] ---
-                if (isSpecialA) {
-                    // 같은 유형의 특별관리 학생을 추천 (맞교환을 통해 반별 특수 학생 수 유지)
+        // 결과 조립: 일반 2 + 특별 2 + 일반 2
+        const finalResults: Student[] = [];
 
-                    // a. 특수교육대상
-                    if (studentA.is_special_class) {
-                        return s.is_special_class;
-                    }
-                    // b. 문제행동학생
-                    else if (studentA.is_problem_student) {
-                        return s.is_problem_student;
-                    }
-                    // c. 학습부진학생
-                    else if (studentA.is_underachiever) {
-                        return s.is_underachiever;
-                    }
+        // 일반 1, 2
+        if (generalCandidates.length > 0) finalResults.push(generalCandidates[0]);
+        if (generalCandidates.length > 1) finalResults.push(generalCandidates[1]);
 
-                    return false; // 그 외의 경우는 추천 안 함
-                }
+        // 특별 1, 2 (studentA가 특별관리인 경우에만 해당 유형 특별관리 학생 노출)
+        if (isSpecialA) {
+            if (specialCandidates.length > 0) finalResults.push(specialCandidates[0]);
+            if (specialCandidates.length > 1) finalResults.push(specialCandidates[1]);
+        }
 
-                // --- [Case B: 일반 학생인 경우 (기존 로직)] ---
-                else {
-                    // a. 특별관리 학생 제외
-                    if (s.is_special_class || s.is_problem_student || s.is_underachiever || s.is_transferring_out) {
-                        return false;
-                    }
+        // 일반 3, 4
+        if (generalCandidates.length > 2) finalResults.push(generalCandidates[2]);
+        if (generalCandidates.length > 3) finalResults.push(generalCandidates[3]);
 
-                    // b. 원래 같은 반이었던 학생만 추천 (section_number 불일치 시 제외)
-                    if (!studentA.section_number || s.section_number !== studentA.section_number) {
-                        return false;
-                    }
+        // 만약 부족하다면 남은 일반 학생들로 채움
+        if (finalResults.length < 6 && generalCandidates.length > 4) {
+            generalCandidates.slice(4, 4 + (6 - finalResults.length)).forEach(s => finalResults.push(s));
+        }
 
-                    // c. 석차 차이 5등 이내 (석차가 있는 경우)
-                    if (studentA.rank && s.rank) {
-                        const diff = Math.abs(studentA.rank - s.rank);
-                        return diff <= 5;
-                    }
+        console.log('📋 추천 결과 구성:', {
+            total: finalResults.length,
+            isSpecialA,
+            specialMatched: specialCandidates.length
+        });
 
-                    return false;
-                }
-            })
-            .slice(0, 5); // 최대 5명
-
-        console.log('📋 추천 결과:', candidates.length, '명');
-        return candidates;
+        return finalResults;
     };
 
     if (loading) return <div className="container" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div className="loading"></div></div>;
@@ -4353,7 +4351,7 @@ export default function AllocationPage() {
                                                 >
                                                     <div style={{ fontWeight: '600' }}>{s.name}</div>
                                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                                        {getSectionName(classIndex)} · {s.gender === 'M' ? '남' : '여'} {s.rank && `· ${s.rank}등`}
+                                                        {getSectionName(classIndex)} · {s.gender === 'M' ? '남' : '여'} {s.rank && `· ${s.rank}등`} {s.section_number && `· 기존 ${s.section_number}반`}
                                                     </div>
                                                 </div>
                                             );
@@ -4372,7 +4370,7 @@ export default function AllocationPage() {
                                         <div style={{ fontWeight: '600', marginBottom: '0.25rem' }}>{studentA.name}</div>
                                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                                             {getSectionName(allocation!.classes.findIndex(c => c.students.some(s => s.id === studentA.id)))} ·{' '}
-                                            {studentA.gender === 'M' ? '남' : '여'} {studentA.rank && `· ${studentA.rank}등`}
+                                            {studentA.gender === 'M' ? '남' : '여'} {studentA.rank && `· ${studentA.rank}등`} {studentA.section_number && `· 기존 ${studentA.section_number}반`}
                                         </div>
                                         <div style={{ marginTop: '0.5rem' }}>
                                             <StudentStatusBadges student={studentA} parseConstraints={parseConstraints} />
@@ -4470,7 +4468,7 @@ export default function AllocationPage() {
                                                         onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
                                                         onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
                                                     >
-                                                        <div style={{ fontWeight: '600' }}>{s.name} · {getSectionName(classIndex)} · {s.rank}등</div>
+                                                        <div style={{ fontWeight: '600' }}>{s.name} · {getSectionName(classIndex)} · {s.rank ? `${s.rank}등` : '미기재'} {s.section_number && `· 기존 ${s.section_number}반`}</div>
                                                         <div style={{ marginTop: '0.3rem' }}>
                                                             <StudentStatusBadges student={s} parseConstraints={parseConstraints} />
                                                         </div>
@@ -4520,7 +4518,7 @@ export default function AllocationPage() {
                                                     >
                                                         <div style={{ fontWeight: '600' }}>{s.name}</div>
                                                         <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                                                            {getSectionName(classIndex)} · {s.gender === 'M' ? '남' : '여'} {s.rank && `· ${s.rank}등`}
+                                                            {getSectionName(classIndex)} · {s.gender === 'M' ? '남' : '여'} {s.rank && `· ${s.rank}등`} {s.section_number && `· 기존 ${s.section_number}반`}
                                                         </div>
                                                     </div>
                                                 );
@@ -4539,7 +4537,7 @@ export default function AllocationPage() {
                                             <div style={{ fontWeight: '600', marginBottom: '0.25rem' }}>{studentB.name}</div>
                                             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                                                 {getSectionName(allocation!.classes.findIndex(c => c.students.some(s => s.id === studentB.id)))} ·{' '}
-                                                {studentB.gender === 'M' ? '남' : '여'} {studentB.rank && `· ${studentB.rank}등`}
+                                                {studentB.gender === 'M' ? '남' : '여'} {studentB.rank && `· ${studentB.rank}등`} {studentB.section_number && `· 기존 ${studentB.section_number}반`}
                                             </div>
                                             <div style={{ marginTop: '0.5rem' }}>
                                                 <StudentStatusBadges student={studentB} parseConstraints={parseConstraints} />
@@ -5080,22 +5078,20 @@ export default function AllocationPage() {
                                                 }}>
                                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%' }}>
                                                         <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}>
-                                                            <span style={{ color: '#818cf8', fontWeight: '700' }}>{solution.studentA.name}</span>({solution.fromClass}반)
+                                                            <span style={{ color: '#818cf8', fontWeight: '700' }}>{solution.studentA.name}(기존{solution.studentA.section_number}반)</span>({solution.fromClass}반)
                                                             <span style={{ color: 'rgba(255,255,255,0.4)' }}>↔</span>
-                                                            <span style={{ color: '#818cf8', fontWeight: '700' }}>{solution.studentB.name}</span>({solution.toClass}반)
+                                                            <span style={{ color: '#818cf8', fontWeight: '700' }}>{solution.studentB.name}(기존{solution.studentB.section_number}반)</span>({solution.toClass}반)
                                                         </div>
-                                                        {(solution.studentA.notes || solution.studentB.notes) && (
-                                                            <div style={{ color: 'rgba(255,255,255,0.6)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                    <span style={{ color: '#818cf8', fontWeight: '600', minWidth: '40px' }}>{solution.studentA.name}:</span>
-                                                                    <StudentStatusBadges student={solution.studentA} parseConstraints={parseConstraints} />
-                                                                </div>
-                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                                    <span style={{ color: '#818cf8', fontWeight: '600', minWidth: '40px' }}>{solution.studentB.name}:</span>
-                                                                    <StudentStatusBadges student={solution.studentB} parseConstraints={parseConstraints} />
-                                                                </div>
+                                                        <div style={{ color: 'rgba(255,255,255,0.6)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                <span style={{ color: '#818cf8', fontWeight: '600', minWidth: '40px' }}>{solution.studentA.name}:</span>
+                                                                <StudentStatusBadges student={solution.studentA} parseConstraints={parseConstraints} />
                                                             </div>
-                                                        )}
+                                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                <span style={{ color: '#818cf8', fontWeight: '600', minWidth: '40px' }}>{solution.studentB.name}:</span>
+                                                                <StudentStatusBadges student={solution.studentB} parseConstraints={parseConstraints} />
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -5114,11 +5110,11 @@ export default function AllocationPage() {
                                                         </div>
                                                         <ul style={{ margin: 0, paddingLeft: '1.2rem', fontSize: '0.85rem', color: 'rgba(255,255,255,0.9)', textAlign: 'left' }}>
                                                             <li>
-                                                                <span style={{ color: '#e0e7ff' }}>기본:</span> {solution.studentA.name}({solution.fromClass}반) ↔ {solution.studentB.name}({solution.toClass}반)
+                                                                <span style={{ color: '#e0e7ff' }}>기본:</span> {solution.studentA.name}(기존{solution.studentA.section_number}반, {solution.fromClass}반) ↔ {solution.studentB.name}(기존{solution.studentB.section_number}반, {solution.toClass}반)
                                                             </li>
                                                             {solution.additionalTransfers.map((t, tIdx) => (
                                                                 <li key={tIdx} style={{ marginTop: '0.2rem' }}>
-                                                                    <span style={{ color: '#93c5fd' }}>추가:</span> {t.student.name} ({t.fromClass}반 ➡️ {t.toClass}반)
+                                                                    <span style={{ color: '#93c5fd' }}>추가:</span> {t.student.name}(기존{t.student.section_number}반) ({t.fromClass}반 ➡️ {t.toClass}반)
                                                                     <span style={{ marginLeft: '0.5rem' }}><StudentStatusBadges student={t.student} parseConstraints={parseConstraints} /></span>
                                                                 </li>
                                                             ))}
