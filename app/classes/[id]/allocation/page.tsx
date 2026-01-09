@@ -1757,78 +1757,126 @@ export default function AllocationPage() {
         if (!studentA || !allocation) return [];
 
         const isSpecialA = studentA.is_special_class || studentA.is_problem_student || studentA.is_underachiever;
-
         const classAIndex = allocation.classes.findIndex(c =>
             c.students.some(s => s.id === studentA.id)
         );
 
-        // 후보군 추출 (성별이 같고 다른 반인 학생들 중 제약 조건이 없는 학생)
-        const allCandidates = allocation.classes
-            .flatMap((c, idx) => idx !== classAIndex ? c.students : [])
-            .filter(s => {
-                // 성별 일치 필수
-                if (s.gender !== studentA.gender) return false;
+        // 1. 실시간 전체 반별 기존 반 분포 계산
+        const classDistributions = allocation.classes.map(cls => {
+            const counts: Record<number, number> = {};
+            cls.students.forEach(s => {
+                if (s.section_number) {
+                    counts[s.section_number] = (counts[s.section_number] || 0) + 1;
+                }
+            });
+            return counts;
+        });
 
-                // 이미 고유한 분리/결합 그룹에 속한 학생은 추천에서 제외 (복잡한 제약 위반 방지)
+        // 전체 기존 반 목록 추출
+        const allPrevClasses = Array.from(new Set(
+            allocation.classes.flatMap(c => c.students.map(s => s.section_number).filter(Boolean) as number[])
+        ));
+
+        // 기존 반별 평균 인원 (균형 기준점)
+        const avgPerClass: Record<number, number> = {};
+        allPrevClasses.forEach(pc => {
+            const total = allocation.classes.reduce((sum, c) =>
+                sum + c.students.filter(s => s.section_number === pc).length, 0);
+            avgPerClass[pc] = total / allocation.classes.length;
+        });
+
+        // 2. 후보군 필터링 (성별 일치 + 제약 조건 없음 + 다른 반)
+        const candidatesBase = allocation.classes
+            .flatMap((c, idx) => idx !== classAIndex ? c.students.map(s => ({ student: s, sectionIndex: idx })) : [])
+            .filter(({ student: s }) => {
+                if (s.gender !== studentA.gender) return false;
                 const { sep, bind } = parseConstraints(s);
                 return sep.length === 0 && bind.length === 0;
             });
 
-        // 1. 특별관리 학생 그룹 (studentA와 동일 유형)
-        const specialCandidates = allCandidates.filter(s => {
-            if (studentA.is_special_class) return s.is_special_class;
-            if (studentA.is_problem_student) return s.is_problem_student;
-            if (studentA.is_underachiever) return s.is_underachiever;
-            return false;
-        });
-        // 2. 일반 학생 그룹 (특별관리가 아닌 학생 중 성적 순 정렬)
-        const generalCandidates = allCandidates
-            .filter(s => !s.is_special_class && !s.is_problem_student && !s.is_underachiever && !s.is_transferring_out)
+        // 3. 그룹별 후보 선별
+
+        // 3-1. 그룹 1: 기존 반 유지 (A와 같은 기존 반)
+        const sameClassCandidates = candidatesBase
+            .filter(({ student: s }) => s.section_number === studentA.section_number)
+            .filter(({ student: s }) => !s.is_special_class && !s.is_problem_student && !s.is_underachiever && !s.is_transferring_out)
+            .sort((a, b) => Math.abs((a.student.rank || 999) - (studentA.rank || 0)) - Math.abs((b.student.rank || 999) - (studentA.rank || 0)));
+
+        // 3-2. 그룹 2: 기존 반 균형 (상대 반에서 과밀된 기존 반 학생)
+        const balancingCandidates = candidatesBase
+            .filter(({ student: s, sectionIndex }) => {
+                if (!s.section_number) return false;
+                if (s.is_special_class || s.is_problem_student || s.is_underachiever || s.is_transferring_out) return false;
+
+                // 학생 A의 기존 반(originA)과 학생 B의 기존 반(originB) 비교
+                const originB = s.section_number;
+
+                // 조건: 학생 B의 기존 반(originB)이 학생 B가 속한 현재 반에서 과밀 상태여야 함
+                const currentCount = classDistributions[sectionIndex][originB] || 0;
+                return currentCount > avgPerClass[originB];
+            })
             .sort((a, b) => {
-                // 1) 기존 반(section_number) 일치 여부 최우선
-                const aSameClass = a.section_number === studentA.section_number;
-                const bSameClass = b.section_number === studentA.section_number;
-
-                if (aSameClass && !bSameClass) return -1;
-                if (!aSameClass && bSameClass) return 1;
-
-                // 2) 기존 반 상황이 같으면 석차 차이가 적은 순 정렬
-                const rankA = a.rank || 999;
-                const rankB = b.rank || 999;
-                const rankTarget = studentA.rank || 0;
-
-                const diffA = Math.abs(rankA - rankTarget);
-                const diffB = Math.abs(rankB - rankTarget);
-
-                return diffA - diffB;
+                // 불균형 해소 점수가 높은 순 (과밀도가 높은 순)
+                const overA = (classDistributions[a.sectionIndex][a.student.section_number!] || 0) - avgPerClass[a.student.section_number!];
+                const overB = (classDistributions[b.sectionIndex][b.student.section_number!] || 0) - avgPerClass[b.student.section_number!];
+                if (overA !== overB) return overB - overA;
+                return Math.abs((a.student.rank || 999) - (studentA.rank || 0)) - Math.abs((b.student.rank || 999) - (studentA.rank || 0));
             });
 
-        // 결과 조립: 일반 2 + 특별 2 + 일반 2
+        // 3-3. 그룹 3: 특별관리 전형 매칭
+        const specialCandidates = candidatesBase
+            .filter(({ student: s }) => {
+                if (studentA.is_special_class) return s.is_special_class;
+                if (studentA.is_problem_student) return s.is_problem_student;
+                if (studentA.is_underachiever) return s.is_underachiever;
+                return false;
+            })
+            .sort((a, b) => Math.abs((a.student.rank || 999) - (studentA.rank || 0)) - Math.abs((b.student.rank || 999) - (studentA.rank || 0)));
+
+        // 4. 최종 리스트 조립
         const finalResults: Student[] = [];
+        const addedIds = new Set<number>();
 
-        // 일반 1, 2
-        if (generalCandidates.length > 0) finalResults.push(generalCandidates[0]);
-        if (generalCandidates.length > 1) finalResults.push(generalCandidates[1]);
+        const addUnique = (list: { student: Student }[]) => {
+            list.forEach(item => {
+                if (!addedIds.has(item.student.id)) {
+                    finalResults.push(item.student);
+                    addedIds.add(item.student.id);
+                }
+            });
+        };
 
-        // 특별 1, 2 (studentA가 특별관리인 경우에만 해당 유형 특별관리 학생 노출)
+        // 조립 규칙 적용
+        // 1) 기존 반 유지 2명
+        addUnique(sameClassCandidates.slice(0, 2));
+
+        // 2) 균형 조정 2명
+        addUnique(balancingCandidates.slice(0, 2));
+
+        // 3) 특별 학생인 경우 전형 매칭 2명 추가
         if (isSpecialA) {
-            if (specialCandidates.length > 0) finalResults.push(specialCandidates[0]);
-            if (specialCandidates.length > 1) finalResults.push(specialCandidates[1]);
+            addUnique(specialCandidates.slice(0, 2));
         }
 
-        // 일반 3, 4
-        if (generalCandidates.length > 2) finalResults.push(generalCandidates[2]);
-        if (generalCandidates.length > 3) finalResults.push(generalCandidates[3]);
-
-        // 만약 부족하다면 남은 일반 학생들로 채움
-        if (finalResults.length < 6 && generalCandidates.length > 4) {
-            generalCandidates.slice(4, 4 + (6 - finalResults.length)).forEach(s => finalResults.push(s));
+        // 인원이 부족할 경우 나머지 후보들로 보충 (최대 일반 4명 / 특별 6명)
+        const limit = isSpecialA ? 6 : 4;
+        if (finalResults.length < limit) {
+            const remainings = [
+                ...sameClassCandidates.slice(2),
+                ...balancingCandidates.slice(2),
+                ...(isSpecialA ? specialCandidates.slice(2) : [])
+            ];
+            addUnique(remainings.slice(0, limit - finalResults.length));
         }
 
-        console.log('📋 추천 결과 구성:', {
+        console.log('📋 고도화 추천 결과:', {
             total: finalResults.length,
             isSpecialA,
-            specialMatched: specialCandidates.length
+            types: finalResults.map(s => ({
+                name: s.name,
+                origin: s.section_number,
+                isBalancing: s.section_number !== studentA.section_number
+            }))
         });
 
         return finalResults;
