@@ -1781,21 +1781,26 @@ export default function AllocationPage() {
             if (studentA.is_underachiever) return s.is_underachiever;
             return false;
         });
-
         // 2. 일반 학생 그룹 (특별관리가 아닌 학생 중 성적 순 정렬)
         const generalCandidates = allCandidates
             .filter(s => !s.is_special_class && !s.is_problem_student && !s.is_underachiever && !s.is_transferring_out)
             .sort((a, b) => {
-                // 석차 차이가 적은 순으로 정렬
-                if (studentA.rank && a.rank && b.rank) {
-                    const diffA = Math.abs(a.rank - studentA.rank);
-                    const diffB = Math.abs(b.rank - studentA.rank);
-                    return diffA - diffB;
-                }
-                // 석차가 없으면 기존 반이 같은 경우 우선
-                if (a.section_number === studentA.section_number && b.section_number !== studentA.section_number) return -1;
-                if (a.section_number !== studentA.section_number && b.section_number === studentA.section_number) return 1;
-                return 0;
+                // 1) 기존 반(section_number) 일치 여부 최우선
+                const aSameClass = a.section_number === studentA.section_number;
+                const bSameClass = b.section_number === studentA.section_number;
+
+                if (aSameClass && !bSameClass) return -1;
+                if (!aSameClass && bSameClass) return 1;
+
+                // 2) 기존 반 상황이 같으면 석차 차이가 적은 순 정렬
+                const rankA = a.rank || 999;
+                const rankB = b.rank || 999;
+                const rankTarget = studentA.rank || 0;
+
+                const diffA = Math.abs(rankA - rankTarget);
+                const diffB = Math.abs(rankB - rankTarget);
+
+                return diffA - diffB;
             });
 
         // 결과 조립: 일반 2 + 특별 2 + 일반 2
@@ -4451,7 +4456,7 @@ export default function AllocationPage() {
                                             borderRadius: '8px',
                                             fontSize: '0.75rem'
                                         }}>
-                                            <div style={{ fontWeight: '600', marginBottom: '0.5rem' }}>💡 추천 학생 (같은 반·성별, 석차 ±5등)</div>
+                                            <div style={{ fontWeight: '600', marginBottom: '0.5rem' }}>💡 AI 추천 (기존 반·성별·성적 고려)</div>
                                             {recommendedStudents.map(s => {
                                                 const classIndex = allocation!.classes.findIndex(c => c.students.some(st => st.id === s.id));
                                                 return (
