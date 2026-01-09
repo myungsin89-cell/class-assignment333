@@ -647,6 +647,82 @@ export default function StudentsPage() {
         }
     };
 
+    const handleFormatData = async () => {
+        if (isCompleted) return;
+
+        const hasData = students.some(s => s.birth_date?.trim() || s.contact?.trim());
+        if (!hasData) {
+            alert('정리할 데이터(생년월일 또는 연락처)가 없습니다.');
+            return;
+        }
+
+        const confirmed = await customConfirm(
+            '입력된 생년월일과 연락처 형식을 정리하시겠습니까?\n\n' +
+            '예: 160908 → 2016.09.08\n' +
+            '    01012345678 → 010-1234-5678'
+        );
+        if (!confirmed) return;
+
+        const updated = students.map(student => {
+            let birth = student.birth_date?.trim() || '';
+            let contact = student.contact?.trim() || '';
+
+            // 1. 생년월일 처리
+            if (birth) {
+                // 숫자와 구분자(., -)만 남김
+                const cleanBirth = birth.replace(/[^0-9.\-]/g, '');
+                const numericOnly = cleanBirth.replace(/\D/g, '');
+
+                if (numericOnly.length === 6) {
+                    // YYMMDD
+                    const year = parseInt(numericOnly.substring(0, 2), 10);
+                    const prefix = year > 30 ? '19' : '20';
+                    birth = `${prefix}${numericOnly.substring(0, 2)}.${numericOnly.substring(2, 4)}.${numericOnly.substring(4, 6)}`;
+                } else if (numericOnly.length === 8) {
+                    // YYYYMMDD
+                    birth = `${numericOnly.substring(0, 4)}.${numericOnly.substring(4, 6)}.${numericOnly.substring(6, 8)}`;
+                } else if (cleanBirth.includes('.') || cleanBirth.includes('-')) {
+                    // 이미 구분자가 있는 경우 점(.)으로 통일 시도
+                    const parts = cleanBirth.split(/[.\-]/).filter(p => p);
+                    if (parts.length === 3) {
+                        let y = parts[0];
+                        const m = parts[1].padStart(2, '0');
+                        const d = parts[2].padStart(2, '0');
+
+                        if (y.length === 2) {
+                            const yearNum = parseInt(y, 10);
+                            const prefix = yearNum > 30 ? '19' : '20';
+                            y = prefix + y;
+                        }
+
+                        if (y.length === 4 && m.length === 2 && d.length === 2) {
+                            birth = `${y}.${m}.${d}`;
+                        }
+                    }
+                }
+            }
+
+            // 2. 연락처 처리
+            if (contact) {
+                const numericOnly = contact.replace(/\D/g, '');
+                if (numericOnly.startsWith('01')) {
+                    if (numericOnly.length === 11) {
+                        // 010-1234-5678
+                        contact = `${numericOnly.substring(0, 3)}-${numericOnly.substring(3, 7)}-${numericOnly.substring(7, 11)}`;
+                    } else if (numericOnly.length === 10) {
+                        // 010-123-4567
+                        contact = `${numericOnly.substring(0, 3)}-${numericOnly.substring(3, 6)}-${numericOnly.substring(6, 10)}`;
+                    }
+                }
+            }
+
+            return { ...student, birth_date: birth, contact: contact };
+        });
+
+        setStudents(updated);
+        alert('데이터 양식이 정리되었습니다.\n변경 사항을 확인 후 최종 저장해 주세요.');
+    };
+
     const handleTempSave = () => {
         try {
             const key = getTempSaveKey();
@@ -910,6 +986,26 @@ export default function StudentsPage() {
                                 </div>
                             )}
                         </div>
+
+                        <button
+                            className="btn btn-secondary"
+                            onClick={handleFormatData}
+                            disabled={isCompleted}
+                            style={{
+                                fontSize: '0.9rem',
+                                padding: '0.5rem 1rem',
+                                border: '1px solid #94a3b8',
+                                color: '#475569',
+                                opacity: isCompleted ? 0.6 : 1,
+                                cursor: isCompleted ? 'not-allowed' : 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.4rem'
+                            }}
+                            title="생년월일 및 휴대폰 번호 형식 자동 정리"
+                        >
+                            🪄 양식 정리
+                        </button>
                     </div>
 
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
