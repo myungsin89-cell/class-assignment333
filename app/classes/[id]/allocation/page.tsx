@@ -140,6 +140,63 @@ function getSectionColor(index: number): { bg: string, border: string, text: str
 }
 
 
+// 학생 상태 배지 렌더링 컴포넌트
+function StudentStatusBadges({ student, parseConstraints }: { student: Student, parseConstraints: (s: Student) => { sep: string[], bind: string[] } }) {
+    const { sep, bind } = parseConstraints(student);
+    const hasSep = sep.length > 0;
+    const hasBind = bind.length > 0;
+
+    return (
+        <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            {hasSep && (
+                <span style={{
+                    display: 'inline-block', padding: '0.1rem 0.4rem', background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: '4px', color: '#ef4444',
+                    fontWeight: '600', fontSize: '0.7rem'
+                }}>분리 ({sep.join(', ')})</span>
+            )}
+            {hasBind && (
+                <span style={{
+                    display: 'inline-block', padding: '0.1rem 0.4rem', background: 'rgba(34, 197, 94, 0.1)',
+                    border: '1px solid rgba(34, 197, 94, 0.3)', borderRadius: '4px', color: '#22c55e',
+                    fontWeight: '600', fontSize: '0.7rem'
+                }}>같은반 ({bind.join(', ')})</span>
+            )}
+            {student.is_problem_student && (
+                <span style={{
+                    display: 'inline-block', padding: '0.1rem 0.4rem', background: 'rgba(249, 115, 22, 0.1)',
+                    border: '1px solid rgba(249, 115, 22, 0.3)', borderRadius: '4px', color: '#f97316',
+                    fontWeight: '600', fontSize: '0.7rem'
+                }}>문제행동</span>
+            )}
+            {student.is_special_class && (
+                <span style={{
+                    display: 'inline-block', padding: '0.1rem 0.4rem', background: 'rgba(168, 85, 247, 0.1)',
+                    border: '1px solid rgba(168, 85, 247, 0.3)', borderRadius: '4px', color: '#a855f7',
+                    fontWeight: '600', fontSize: '0.7rem'
+                }}>특수교육</span>
+            )}
+            {student.is_underachiever && (
+                <span style={{
+                    display: 'inline-block', padding: '0.1rem 0.4rem', background: 'rgba(59, 130, 246, 0.1)',
+                    border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: '4px', color: '#3b82f6',
+                    fontWeight: '600', fontSize: '0.7rem'
+                }}>학습부진</span>
+            )}
+            {student.is_transferring_out && (
+                <span style={{
+                    display: 'inline-block', padding: '0.1rem 0.4rem', background: 'rgba(148, 163, 184, 0.1)',
+                    border: '1px solid rgba(148, 163, 184, 0.3)', borderRadius: '4px', color: '#94a3b8',
+                    fontWeight: '600', fontSize: '0.7rem'
+                }}>전출예정</span>
+            )}
+            {!hasSep && !hasBind && !student.is_problem_student && !student.is_special_class && !student.is_underachiever && !student.is_transferring_out && (
+                <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>상태 정보 없음</span>
+            )}
+        </div>
+    );
+}
+
 export default function AllocationPage() {
     const params = useParams();
     const router = useRouter();
@@ -4317,19 +4374,9 @@ export default function AllocationPage() {
                                             {getSectionName(allocation!.classes.findIndex(c => c.students.some(s => s.id === studentA.id)))} ·{' '}
                                             {studentA.gender === 'M' ? '남' : '여'} {studentA.rank && `· ${studentA.rank}등`}
                                         </div>
-                                        {studentA.notes && (
-                                            <div style={{
-                                                marginTop: '0.5rem',
-                                                fontSize: '0.75rem',
-                                                color: '#60a5fa',
-                                                padding: '0.3rem 0.5rem',
-                                                background: 'rgba(59, 130, 246, 0.1)',
-                                                borderRadius: '4px',
-                                                borderLeft: '2px solid #3b82f6'
-                                            }}>
-                                                📝 {studentA.notes}
-                                            </div>
-                                        )}
+                                        <div style={{ marginTop: '0.5rem' }}>
+                                            <StudentStatusBadges student={studentA} parseConstraints={parseConstraints} />
+                                        </div>
                                         <button
                                             onClick={() => {
                                                 setStudentA(null);
@@ -4424,18 +4471,9 @@ export default function AllocationPage() {
                                                         onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'}
                                                     >
                                                         <div style={{ fontWeight: '600' }}>{s.name} · {getSectionName(classIndex)} · {s.rank}등</div>
-                                                        {s.notes && (
-                                                            <div style={{
-                                                                fontSize: '0.7rem',
-                                                                color: 'rgba(255,255,255,0.6)',
-                                                                marginTop: '0.2rem',
-                                                                overflow: 'hidden',
-                                                                textOverflow: 'ellipsis',
-                                                                whiteSpace: 'nowrap'
-                                                            }}>
-                                                                📝 {s.notes}
-                                                            </div>
-                                                        )}
+                                                        <div style={{ marginTop: '0.3rem' }}>
+                                                            <StudentStatusBadges student={s} parseConstraints={parseConstraints} />
+                                                        </div>
                                                     </div>
                                                 );
                                             })}
@@ -4503,19 +4541,9 @@ export default function AllocationPage() {
                                                 {getSectionName(allocation!.classes.findIndex(c => c.students.some(s => s.id === studentB.id)))} ·{' '}
                                                 {studentB.gender === 'M' ? '남' : '여'} {studentB.rank && `· ${studentB.rank}등`}
                                             </div>
-                                            {studentB.notes && (
-                                                <div style={{
-                                                    marginTop: '0.5rem',
-                                                    fontSize: '0.75rem',
-                                                    color: '#60a5fa',
-                                                    padding: '0.3rem 0.5rem',
-                                                    background: 'rgba(59, 130, 246, 0.1)',
-                                                    borderRadius: '4px',
-                                                    borderLeft: '2px solid #3b82f6'
-                                                }}>
-                                                    📝 {studentB.notes}
-                                                </div>
-                                            )}
+                                            <div style={{ marginTop: '0.5rem' }}>
+                                                <StudentStatusBadges student={studentB} parseConstraints={parseConstraints} />
+                                            </div>
                                             <button
                                                 onClick={() => {
                                                     setStudentB(null);
@@ -5057,19 +5085,15 @@ export default function AllocationPage() {
                                                             <span style={{ color: '#818cf8', fontWeight: '700' }}>{solution.studentB.name}</span>({solution.toClass}반)
                                                         </div>
                                                         {(solution.studentA.notes || solution.studentB.notes) && (
-                                                            <div style={{
-                                                                display: 'flex',
-                                                                flexDirection: 'column',
-                                                                gap: '0.25rem',
-                                                                fontSize: '0.8rem',
-                                                                textAlign: 'left',
-                                                                padding: '0.5rem',
-                                                                background: 'rgba(255,255,255,0.03)',
-                                                                borderRadius: '8px',
-                                                                border: '1px solid rgba(255,255,255,0.05)'
-                                                            }}>
-                                                                {solution.studentA.notes && <div style={{ color: 'rgba(255,255,255,0.6)' }}><span style={{ color: '#818cf8', fontWeight: '600' }}>{solution.studentA.name}:</span> {solution.studentA.notes}</div>}
-                                                                {solution.studentB.notes && <div style={{ color: 'rgba(255,255,255,0.6)' }}><span style={{ color: '#818cf8', fontWeight: '600' }}>{solution.studentB.name}:</span> {solution.studentB.notes}</div>}
+                                                            <div style={{ color: 'rgba(255,255,255,0.6)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                    <span style={{ color: '#818cf8', fontWeight: '600', minWidth: '40px' }}>{solution.studentA.name}:</span>
+                                                                    <StudentStatusBadges student={solution.studentA} parseConstraints={parseConstraints} />
+                                                                </div>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                                    <span style={{ color: '#818cf8', fontWeight: '600', minWidth: '40px' }}>{solution.studentB.name}:</span>
+                                                                    <StudentStatusBadges student={solution.studentB} parseConstraints={parseConstraints} />
+                                                                </div>
                                                             </div>
                                                         )}
                                                     </div>
@@ -5095,7 +5119,7 @@ export default function AllocationPage() {
                                                             {solution.additionalTransfers.map((t, tIdx) => (
                                                                 <li key={tIdx} style={{ marginTop: '0.2rem' }}>
                                                                     <span style={{ color: '#93c5fd' }}>추가:</span> {t.student.name} ({t.fromClass}반 ➡️ {t.toClass}반)
-                                                                    {t.student.notes && <span style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', marginLeft: '0.5rem' }}>📝 {t.student.notes}</span>}
+                                                                    <span style={{ marginLeft: '0.5rem' }}><StudentStatusBadges student={t.student} parseConstraints={parseConstraints} /></span>
                                                                 </li>
                                                             ))}
                                                         </ul>
