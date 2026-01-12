@@ -235,6 +235,7 @@ export default function AllocationPage() {
     const [aiIssues, setAiIssues] = useState<Issue[]>([]);
     const [aiSolutions, setAiSolutions] = useState<SwapSolution[]>([]);
     const [selectedSolutions, setSelectedSolutions] = useState<Set<number>>(new Set());
+    const [aiProcessing, setAiProcessing] = useState(false); // AI 계산 중 로딩 상태
 
     // 토스트 알림 상태
     const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
@@ -1668,41 +1669,69 @@ export default function AllocationPage() {
         }, 300);
     };
 
-    // AI 추천 실행 (최대 3단계 변화)
-    const handleAiRecommendation = () => {
-        if (!allocation) return;
+    // AI 추천 실행 (최대 3단계 변화) - 비동기 처리
+    const handleAiRecommendation = async () => {
+        if (!allocation || aiProcessing) return;
 
-        const issues = detectIssues(allocation);
-        if (issues.length === 0) {
-            setToast({ message: '해결할 문제가 없습니다! ✅', type: 'success' });
-            return;
+        setAiProcessing(true);
+        setToast({ message: 'AI가 최적의 해결책을 찾는 중...', type: 'info' });
+
+        // UI 업데이트를 위한 짧은 지연
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        try {
+            const issues = detectIssues(allocation);
+            if (issues.length === 0) {
+                setToast({ message: '해결할 문제가 없습니다! ✅', type: 'success' });
+                setAiProcessing(false);
+                return;
+            }
+
+            // 최대 3개 해결책으로 제한 (성능 최적화)
+            const solutions = findSwapSolutions(allocation, issues, 3);
+            setAiIssues(issues);
+            setAiSolutions(solutions);
+            setSelectedSolutions(new Set());
+            setShowAiModal(true);
+            setToast({ message: `${solutions.length}개의 해결책을 찾았습니다!`, type: 'success' });
+        } catch (error) {
+            console.error('AI 추천 오류:', error);
+            setToast({ message: 'AI 추천 중 오류가 발생했습니다.', type: 'error' });
+        } finally {
+            setAiProcessing(false);
         }
-
-        // 최대 3개 해결책으로 제한 (성능 최적화)
-        const solutions = findSwapSolutions(allocation, issues, 3);
-        setAiIssues(issues);
-        setAiSolutions(solutions);
-        setSelectedSolutions(new Set());
-        setShowAiModal(true);
     };
 
-    // 개별 위반 AI 해결
-    const handleSolveViolation = (violation: any) => {
-        if (!allocation) return;
+    // 개별 위반 AI 해결 (비동기 처리)
+    const handleSolveViolation = async (violation: any) => {
+        if (!allocation || aiProcessing) return;
 
-        // 해당 위반만 타겟팅
-        const targetIssues = [violation];
-        const solutions = findSwapSolutions(allocation, targetIssues, 1);
+        setAiProcessing(true);
+        setToast({ message: 'AI가 해결 방법을 찾는 중...', type: 'info' });
 
-        if (solutions.length === 0) {
-            setToast({ message: '해결 방법을 찾을 수 없습니다.', type: 'error' });
-            return;
+        // UI 업데이트를 위한 짧은 지연
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        try {
+            // 해당 위반만 타겟팅
+            const targetIssues = [violation];
+            const solutions = findSwapSolutions(allocation, targetIssues, 1);
+
+            if (solutions.length === 0) {
+                setToast({ message: '해결 방법을 찾을 수 없습니다.', type: 'error' });
+                return;
+            }
+
+            // 첫 번째 솔루션 자동 적용
+            const solution = solutions[0];
+            performSwap(solution.studentA, solution.studentB);
+            setToast({ message: `${solution.studentA.name} ↔ ${solution.studentB.name} 교환 완료`, type: 'success' });
+        } catch (error) {
+            console.error('AI 해결 오류:', error);
+            setToast({ message: 'AI 해결 중 오류가 발생했습니다.', type: 'error' });
+        } finally {
+            setAiProcessing(false);
         }
-
-        // 첫 번째 솔루션 자동 적용
-        const solution = solutions[0];
-        performSwap(solution.studentA, solution.studentB);
-        setToast({ message: `${solution.studentA.name} ↔ ${solution.studentB.name} 교환 완료`, type: 'success' });
     };
 
     // AI 솔루션 선택/해제
@@ -3233,32 +3262,37 @@ export default function AllocationPage() {
                             </div>
                             <button
                                 onClick={handleAiRecommendation}
-                                disabled={false}
+                                disabled={aiProcessing}
                                 style={{
                                     padding: '0.6rem 1.25rem',
-                                    background: allViolations.length === 0 ? '#8b5cf6' : 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                                    background: aiProcessing
+                                        ? '#6b7280'
+                                        : (allViolations.length === 0 ? '#8b5cf6' : 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)'),
                                     color: 'white',
                                     border: 'none',
                                     borderRadius: '8px',
                                     fontSize: '0.85rem',
                                     fontWeight: 'bold',
-                                    cursor: 'pointer',
+                                    cursor: aiProcessing ? 'not-allowed' : 'pointer',
                                     transition: 'all 0.2s',
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '0.5rem',
-                                    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.4)'
+                                    boxShadow: aiProcessing ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.4)',
+                                    opacity: aiProcessing ? 0.6 : 1
                                 }}
                                 onMouseEnter={(e) => {
-                                    e.currentTarget.style.transform = 'translateY(-2px)';
-                                    e.currentTarget.style.filter = 'brightness(1.1)';
+                                    if (!aiProcessing) {
+                                        e.currentTarget.style.transform = 'translateY(-2px)';
+                                        e.currentTarget.style.filter = 'brightness(1.1)';
+                                    }
                                 }}
                                 onMouseLeave={(e) => {
                                     e.currentTarget.style.transform = 'translateY(0)';
                                     e.currentTarget.style.filter = 'brightness(1)';
                                 }}
                             >
-                                {allViolations.length === 0 ? '✨ 미세 최적화 실행' : '🤖 스마트 해결사 열기'}
+                                {aiProcessing ? '⏳ 계산 중...' : (allViolations.length === 0 ? '✨ 미세 최적화 실행' : '🤖 스마트 해결사 열기')}
                             </button>
                         </div>
 
@@ -3351,31 +3385,37 @@ export default function AllocationPage() {
                                                     e.stopPropagation();
                                                     handleSolveViolation(v);
                                                 }}
+                                                disabled={aiProcessing}
                                                 style={{
                                                     padding: '0.4rem 0.75rem',
-                                                    background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                                                    background: aiProcessing
+                                                        ? '#6b7280'
+                                                        : 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
                                                     color: 'white',
                                                     border: 'none',
                                                     borderRadius: '6px',
                                                     fontSize: '0.7rem',
                                                     fontWeight: 'bold',
-                                                    cursor: 'pointer',
+                                                    cursor: aiProcessing ? 'not-allowed' : 'pointer',
                                                     transition: 'all 0.2s',
                                                     whiteSpace: 'nowrap',
                                                     display: 'flex',
                                                     alignItems: 'center',
-                                                    gap: '0.3rem'
+                                                    gap: '0.3rem',
+                                                    opacity: aiProcessing ? 0.5 : 1
                                                 }}
                                                 onMouseEnter={(e) => {
-                                                    e.currentTarget.style.transform = 'scale(1.05)';
-                                                    e.currentTarget.style.filter = 'brightness(1.1)';
+                                                    if (!aiProcessing) {
+                                                        e.currentTarget.style.transform = 'scale(1.05)';
+                                                        e.currentTarget.style.filter = 'brightness(1.1)';
+                                                    }
                                                 }}
                                                 onMouseLeave={(e) => {
                                                     e.currentTarget.style.transform = 'scale(1)';
                                                     e.currentTarget.style.filter = 'brightness(1)';
                                                 }}
                                             >
-                                                🤖 AI해결
+                                                {aiProcessing ? '⏳' : '🤖 AI해결'}
                                             </button>
                                         )}
                                     </div>
