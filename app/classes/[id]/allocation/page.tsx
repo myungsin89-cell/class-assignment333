@@ -2284,9 +2284,35 @@ export default function AllocationPage() {
                                     </div>
                                 ))}
                             </div>
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'rgba(99, 102, 241, 0.1)', borderRadius: '8px', textAlign: 'center' }}>
-                                <span style={{ color: 'var(--text-secondary)' }}>평균: </span>
-                                <span style={{ fontWeight: 'bold', color: '#6366f1' }}>{overallStats ? (overallStats.totalStudents / overallStats.sectionCount).toFixed(1) : '-'}명</span>
+                            <div style={{ 
+                                marginTop: '1.5rem', 
+                                padding: '1.25rem', 
+                                background: 'rgba(99, 102, 241, 0.08)', 
+                                borderRadius: '12px', 
+                                border: '1px solid rgba(99, 102, 241, 0.2)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '0.5rem'
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>전체 총원</span>
+                                    <span style={{ fontWeight: 'bold', color: 'white', fontSize: '1.1rem' }}>
+                                        {overallStats?.totalStudents || 0}명
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.25rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>남학생 / 여학생</span>
+                                    <div style={{ display: 'flex', gap: '1rem' }}>
+                                        <span style={{ color: '#3b82f6', fontWeight: '600' }}>남 {overallStats?.maleCount || 0}명</span>
+                                        <span style={{ color: '#ec4899', fontWeight: '600' }}>여 {overallStats?.femaleCount || 0}명</span>
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.25rem' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 'bold' }}>학급별 평균</span>
+                                    <span style={{ fontWeight: 'bold', color: '#6366f1', fontSize: '1.1rem' }}>
+                                        {overallStats ? (overallStats.totalStudents / overallStats.sectionCount).toFixed(1) : '-'}명
+                                    </span>
+                                </div>
                             </div>
                             <button onClick={() => setShowClassSizeModal(false)} className="btn btn-secondary" style={{ width: '100%', marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>닫기</button>
                         </div>
