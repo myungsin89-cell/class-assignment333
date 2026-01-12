@@ -712,9 +712,11 @@ export default function AllocationPage() {
     const overallStats = useMemo(() => {
         if (!allocation) return null;
 
-        const totalStudents = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => !s.is_transferring_out).length, 0);
+        const totalStudents = allocation.classes.reduce((sum, c) => sum + c.students.length, 0);
         const maleCount = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => !s.is_transferring_out && s.gender === 'M').length, 0);
         const femaleCount = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => !s.is_transferring_out && s.gender === 'F').length, 0);
+        const transferOutMale = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => s.is_transferring_out && s.gender === 'M').length, 0);
+        const transferOutFemale = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => s.is_transferring_out && s.gender === 'F').length, 0);
         const sepGroupCount = sepGroupMap.size;
         const bindGroupCount = bindGroupMap.size;
         const duplicateCount = duplicateNames.size;
@@ -723,6 +725,8 @@ export default function AllocationPage() {
             totalStudents,
             maleCount,
             femaleCount,
+            transferOutMale,
+            transferOutFemale,
             sepGroupCount,
             bindGroupCount,
             duplicateCount,
@@ -1389,40 +1393,51 @@ export default function AllocationPage() {
                     const groupEnd = Math.min(groupStart + classesPerRow, totalClasses);
                     const classesInGroup = allocation.classes.slice(groupStart, groupEnd);
 
-                    // 반 제목 행 (간소화)
+                    // 반 제목 행 (통계 가로 배치)
                     const titleRow: any[] = [];
                     classesInGroup.forEach((newClass, idx) => {
                         const actualIdx = groupStart + idx;
                         const sectionName = getSectionName(actualIdx);
+                        const maleCount = newClass.gender_stats.male;
+                        const femaleCount = newClass.gender_stats.female;
+                        const totalCount = newClass.students.length;
 
+                        // 반 이름
                         titleRow.push({
                             v: sectionName,
                             s: { font: { bold: true, sz: 11 }, fill: { fgColor: { rgb: 'D0E0F0' } }, alignment: { horizontal: 'center' } }
                         });
-                        titleRow.push('', '', '', ''); // 나머지 컬럼
+                        // 남
+                        titleRow.push({
+                            v: `남 ${maleCount}`,
+                            s: { font: { sz: 9 }, fill: { fgColor: { rgb: 'E8F4F8' } }, alignment: { horizontal: 'center' } }
+                        });
+                        // 여
+                        titleRow.push({
+                            v: `여 ${femaleCount}`,
+                            s: { font: { sz: 9 }, fill: { fgColor: { rgb: 'FCE8F3' } }, alignment: { horizontal: 'center' } }
+                        });
+                        // 총원
+                        titleRow.push({
+                            v: '총원',
+                            s: { font: { sz: 9 }, fill: { fgColor: { rgb: 'F0F0F0' } }, alignment: { horizontal: 'center' } }
+                        });
+                        // 총원 숫자
+                        titleRow.push({
+                            v: `${totalCount}명`,
+                            s: { font: { sz: 9, bold: true }, fill: { fgColor: { rgb: 'F0F0F0' } }, alignment: { horizontal: 'center' } }
+                        });
+                        // 비고
+                        titleRow.push('');
+
                         if (idx < classesInGroup.length - 1) titleRow.push(''); // 간격
                     });
                     grid.push(titleRow);
 
-                    // 성별 통계 행
-                    const genderStatsRow: any[] = [];
-                    classesInGroup.forEach((newClass, idx) => {
-                        const maleCount = newClass.gender_stats.male;
-                        const femaleCount = newClass.gender_stats.female;
-
-                        genderStatsRow.push({
-                            v: `남 ${maleCount}명 / 여 ${femaleCount}명`,
-                            s: { font: { sz: 9, italic: true }, fill: { fgColor: { rgb: 'F0F0F0' } }, alignment: { horizontal: 'center' } }
-                        });
-                        genderStatsRow.push('', '', '', '');
-                        if (idx < classesInGroup.length - 1) genderStatsRow.push('');
-                    });
-                    grid.push(genderStatsRow);
-
-                    // 컬럼 헤더 (성별, 석차 추가)
+                    // 컬럼 헤더 (비고 추가)
                     const headerRow: any[] = [];
                     classesInGroup.forEach((_, idx) => {
-                        ['번호', '이름', '성별', '기존반', '석차'].forEach(h => {
+                        ['번호', '이름', '성별', '기존반', '석차', '비고'].forEach(h => {
                             headerRow.push({ v: h, s: { font: { bold: true }, fill: { fgColor: { rgb: 'F0F0F0' } }, alignment: { horizontal: 'center' } } });
                         });
                         if (idx < classesInGroup.length - 1) headerRow.push('');
@@ -1436,6 +1451,12 @@ export default function AllocationPage() {
 
                         return [...ourStudents].sort(koreanSort).concat([...otherStudents].sort(koreanSort)).map((student, sIdx) => {
                             const isOurs = (student.section_number || 1) === origClassNum;
+                            const specialTags = [];
+                            if (student.is_special_class) specialTags.push('특수');
+                            if (student.is_problem_student) specialTags.push('문제');
+                            if (student.is_underachiever) specialTags.push('부진');
+                            if (student.is_transferring_out) specialTags.push('전출');
+
                             const cellStyle = isOurs ? {
                                 fill: { fgColor: { rgb: 'FFFF99' } },
                                 font: { bold: true }
@@ -1446,7 +1467,8 @@ export default function AllocationPage() {
                                 { v: student.name, s: cellStyle },
                                 { v: student.gender === 'M' ? '남' : '여', s: cellStyle },
                                 { v: student.section_number || 1, s: cellStyle },
-                                { v: student.rank || '-', s: cellStyle }
+                                { v: student.rank || '-', s: cellStyle },
+                                { v: specialTags.join(', '), s: cellStyle }
                             ];
                         });
                     });
@@ -1461,7 +1483,7 @@ export default function AllocationPage() {
                             if (i < classData.length) {
                                 row.push(...classData[i]);
                             } else {
-                                row.push('', '', '', '', '');
+                                row.push('', '', '', '', '', '');
                             }
                             if (idx < groupData.length - 1) row.push('');
                         });
@@ -1473,7 +1495,7 @@ export default function AllocationPage() {
                         grid.push([]);
                         const separatorRow = [];
                         for (let i = 0; i < classesInGroup.length; i++) {
-                            separatorRow.push('─────', '─────', '─────', '─────', '─────');
+                            separatorRow.push('─────', '─────', '─────', '─────', '─────', '─────');
                             if (i < classesInGroup.length - 1) separatorRow.push('');
                         }
                         grid.push(separatorRow);
@@ -1491,6 +1513,7 @@ export default function AllocationPage() {
                     colWidths.push({ wch: 6 });   // 성별
                     colWidths.push({ wch: 7 });   // 기존반
                     colWidths.push({ wch: 7 });   // 석차
+                    colWidths.push({ wch: 12 });  // 비고
                     if (i < classesPerRow - 1) colWidths.push({ wch: 2 }); // 간격
                 }
                 worksheet['!cols'] = colWidths;
@@ -1645,7 +1668,7 @@ export default function AllocationPage() {
         }, 300);
     };
 
-    // AI 추천 실행
+    // AI 추천 실행 (최대 3단계 변화)
     const handleAiRecommendation = () => {
         if (!allocation) return;
 
@@ -1655,8 +1678,8 @@ export default function AllocationPage() {
             return;
         }
 
-        // 최상의 해결책 1개만 가져오기 (v2.1)
-        const solutions = findSwapSolutions(allocation, issues, 1);
+        // 최대 3개 해결책으로 제한 (성능 최적화)
+        const solutions = findSwapSolutions(allocation, issues, 3);
         setAiIssues(issues);
         setAiSolutions(solutions);
         setSelectedSolutions(new Set());
@@ -2317,6 +2340,15 @@ export default function AllocationPage() {
                                         <span style={{ color: '#ec4899', fontWeight: '600' }}>여 {overallStats?.femaleCount || 0}명</span>
                                     </div>
                                 </div>
+                                {overallStats && (overallStats.transferOutMale > 0 || overallStats.transferOutFemale > 0) && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.25rem 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>전출예정</span>
+                                        <div style={{ display: 'flex', gap: '1rem' }}>
+                                            <span style={{ color: '#94a3b8', fontWeight: '600' }}>남 {overallStats.transferOutMale}명</span>
+                                            <span style={{ color: '#94a3b8', fontWeight: '600' }}>여 {overallStats.transferOutFemale}명</span>
+                                        </div>
+                                    </div>
+                                )}
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.25rem' }}>
                                     <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', fontWeight: 'bold' }}>학급별 평균</span>
                                     <span style={{ fontWeight: 'bold', color: '#6366f1', fontSize: '1.1rem' }}>

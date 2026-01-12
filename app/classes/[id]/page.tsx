@@ -33,6 +33,7 @@ export default function ClassSectionsPage() {
     const [sectionStatuses, setSectionStatuses] = useState<SectionStatus>({});
     const [loading, setLoading] = useState(true);
     const [deleteModal, setDeleteModal] = useState<{ show: boolean; section: number | null }>({ show: false, section: null });
+    const [sectionStats, setSectionStats] = useState<{ [key: number]: { male: number; female: number; total: number } }>({});
 
     useEffect(() => {
         loadClassData();
@@ -51,12 +52,40 @@ export default function ClassSectionsPage() {
             } catch (e) {
                 setSectionStatuses({});
             }
+
+            // 각 반별 학생 통계 가져오기
+            await loadSectionStats(data.section_count);
         } catch (error) {
             console.error('Error loading class data:', error);
             alert('학급 정보를 불러오는 중 오류가 발생했습니다.');
         } finally {
             setLoading(false);
         }
+    };
+
+    const loadSectionStats = async (sectionCount: number) => {
+        const stats: { [key: number]: { male: number; female: number; total: number } } = {};
+
+        for (let section = 1; section <= sectionCount; section++) {
+            try {
+                const response = await fetch(`/api/students?classId=${classId}&section=${section}`);
+                const students = await response.json();
+
+                const maleCount = students.filter((s: any) => s.gender === 'M').length;
+                const femaleCount = students.filter((s: any) => s.gender === 'F').length;
+
+                stats[section] = {
+                    male: maleCount,
+                    female: femaleCount,
+                    total: students.length
+                };
+            } catch (error) {
+                console.error(`Error loading stats for section ${section}:`, error);
+                stats[section] = { male: 0, female: 0, total: 0 };
+            }
+        }
+
+        setSectionStats(stats);
     };
 
     const handleSectionClick = (section: number) => {
@@ -360,9 +389,30 @@ export default function ClassSectionsPage() {
                 </div>
 
                 {/* 반 목록 Grid */}
-                <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
                     <h2 style={{ margin: 0 }}>📂 학급 목록</h2>
                     <span className="badge badge-group">{classData.section_count}개 학급</span>
+                    {(() => {
+                        const totalMale = Object.values(sectionStats).reduce((sum, stat) => sum + stat.male, 0);
+                        const totalFemale = Object.values(sectionStats).reduce((sum, stat) => sum + stat.female, 0);
+                        const totalStudents = Object.values(sectionStats).reduce((sum, stat) => sum + stat.total, 0);
+
+                        if (totalStudents > 0) {
+                            return (
+                                <span style={{
+                                    fontSize: '0.9rem',
+                                    color: 'var(--text-secondary)',
+                                    padding: '0.4rem 0.8rem',
+                                    background: 'rgba(59, 130, 246, 0.1)',
+                                    borderRadius: '6px',
+                                    border: '1px solid rgba(59, 130, 246, 0.2)'
+                                }}>
+                                    전체: 남 {totalMale}명 · 여 {totalFemale}명 · 총 {totalStudents}명
+                                </span>
+                            );
+                        }
+                        return null;
+                    })()}
                 </div>
 
                 <div style={{
@@ -452,7 +502,25 @@ export default function ClassSectionsPage() {
                                     </div>
 
                                     {isCompleted ? (
-                                        <span className="badge badge-special">작성완료</span>
+                                        <>
+                                            <span className="badge badge-special">작성완료</span>
+                                            {sectionStats[section] && sectionStats[section].total > 0 && (
+                                                <div style={{
+                                                    fontSize: '0.85rem',
+                                                    color: 'var(--text-secondary)',
+                                                    marginTop: '0.25rem',
+                                                    display: 'flex',
+                                                    gap: '0.5rem',
+                                                    flexWrap: 'wrap'
+                                                }}>
+                                                    <span>남 {sectionStats[section].male}명</span>
+                                                    <span>·</span>
+                                                    <span>여 {sectionStats[section].female}명</span>
+                                                    <span>·</span>
+                                                    <span style={{ fontWeight: '600' }}>총 {sectionStats[section].total}명</span>
+                                                </div>
+                                            )}
+                                        </>
                                     ) : (
                                         <span className="badge badge-group" style={{ background: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', borderColor: 'rgba(99, 102, 241, 0.2)' }}>
                                             작성중
