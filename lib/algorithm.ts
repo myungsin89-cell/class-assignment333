@@ -38,10 +38,9 @@ function parseConstraints(student: Student) {
 }
 
 function getGenderCounts(classStudents: Student[]): { male: number; female: number } {
-    const activeStudents = classStudents.filter(s => !s.is_transferring_out);
     return {
-        male: activeStudents.filter(s => normalizeGender(s.gender) === 'M').length,
-        female: activeStudents.filter(s => normalizeGender(s.gender) === 'F').length
+        male: classStudents.filter(s => !s.is_transferring_out && normalizeGender(s.gender) === 'M').length,
+        female: classStudents.filter(s => !s.is_transferring_out && normalizeGender(s.gender) === 'F').length
     };
 }
 
@@ -50,7 +49,7 @@ function getGenderCounts(classStudents: Student[]): { male: number; female: numb
  */
 function getWeightedClassSize(classStudents: Student[], reductionWeight: number): number {
     const actualCount = classStudents.filter(s => !s.is_transferring_out).length;
-    const specialCount = classStudents.filter(s => s.is_special_class && !s.is_transferring_out).length;
+    const specialCount = classStudents.filter(s => !s.is_transferring_out && s.is_special_class).length;
     // 특수학생 1명이 reductionWeight 만큼의 공간을 차지함
     return actualCount + (specialCount * (reductionWeight - 1));
 }
@@ -59,7 +58,7 @@ function getWeightedClassSize(classStudents: Student[], reductionWeight: number)
  * 학급의 평균 석차를 계산합니다.
  */
 function getClassAverageRank(classStudents: Student[]): number {
-    const studentsWithRank = classStudents.filter(s => s.rank !== undefined && s.rank !== null && !s.is_transferring_out);
+    const studentsWithRank = classStudents.filter(s => !s.is_transferring_out && s.rank !== undefined && s.rank !== null);
     if (studentsWithRank.length === 0) return 15; // 기본 중간값 (보통 1~30위 기준)
     return studentsWithRank.reduce((sum, s) => sum + (s.rank || 0), 0) / studentsWithRank.length;
 }
@@ -78,7 +77,7 @@ function calculatePenalty(
 
     const weightedSize = getWeightedClassSize(targetClass, config.specialReductionCount);
     // 특수학생인 경우 가중치 추가 (미래 상태 예측)
-    const studentWeight = (student.is_special_class && !student.is_transferring_out) ? config.specialReductionCount : 1;
+    const studentWeight = (student.is_special_class) ? config.specialReductionCount : 1;
     const projectedSize = weightedSize + studentWeight;
 
     // 최소 사이즈와의 편차
@@ -86,7 +85,7 @@ function calculatePenalty(
 
     // 1. [Layer 1] 동명이인 분리 (10^12) - 절대적 최우선
     const duplicateNameCount = targetClass.filter(s =>
-        s.name === student.name && !s.is_transferring_out
+        !s.is_transferring_out && s.name === student.name
     ).length;
     if (duplicateNameCount > 0) penalty += 1_000_000_000_000; // 10^12
 
@@ -99,9 +98,9 @@ function calculatePenalty(
     const gender = normalizeGender(student.gender);
     const originClass = student.section_number || 0;
     const clumpingGenderCount = targetClass.filter(s =>
+        !s.is_transferring_out &&
         (s.section_number || 0) === originClass &&
-        normalizeGender(s.gender) === gender &&
-        !s.is_transferring_out
+        normalizeGender(s.gender) === gender
     ).length;
     if (clumpingGenderCount > 0) penalty += clumpingGenderCount * 10_000_000; // 10^7 (개당)
 
@@ -112,7 +111,7 @@ function calculatePenalty(
 
     // 5. [Layer 5] 기존반 분산 (10^4) - 성별 달라도 가급적 분리
     const sameOriginCount = targetClass.filter(s =>
-        (s.section_number || 0) === originClass && !s.is_transferring_out
+        !s.is_transferring_out && (s.section_number || 0) === originClass
     ).length;
     if (sameOriginCount > 0) penalty += sameOriginCount * 10_000; // 10^4
 
@@ -123,21 +122,21 @@ function calculatePenalty(
 
     // 7. [Layer 7] 특별관리대상 분산 (10^3) - 성별 균형과 동등
     if (student.is_problem_student) {
-        const problemCount = targetClass.filter(s => s.is_problem_student && !s.is_transferring_out).length;
+        const problemCount = targetClass.filter(s => !s.is_transferring_out && s.is_problem_student).length;
         penalty += problemCount * 1000;
 
         // 특수학생 반 부담 감소: 특수학생 있는 반에 문제행동 배정 시 추가 페널티
-        const specialCount = targetClass.filter(s => s.is_special_class && !s.is_transferring_out).length;
+        const specialCount = targetClass.filter(s => !s.is_transferring_out && s.is_special_class).length;
         if (specialCount > 0) {
             penalty += specialCount * 10000; // 특수학생 1명당 10000점 추가 페널티 (기존반 분산과 동등)
         }
     }
     if (student.is_underachiever) {
-        const underachieverCount = targetClass.filter(s => s.is_underachiever && !s.is_transferring_out).length;
+        const underachieverCount = targetClass.filter(s => !s.is_transferring_out && s.is_underachiever).length;
         penalty += underachieverCount * 1000;
 
         // 특수학생 반 부담 감소: 특수학생 있는 반에 부진아 배정 시 추가 페널티
-        const specialCount = targetClass.filter(s => s.is_special_class && !s.is_transferring_out).length;
+        const specialCount = targetClass.filter(s => !s.is_transferring_out && s.is_special_class).length;
         if (specialCount > 0) {
             penalty += specialCount * 10000; // 특수학생 1명당 10000점 추가 페널티 (기존반 분산과 동등)
         }
@@ -168,7 +167,7 @@ function assignFixedStudents(
     const assignedIds = new Set<number>();
 
     // 1. 특수학생 분산 배치 및 Lock (랜덤 시작)
-    const special = students.filter(s => s.is_special_class && !s.is_transferring_out);
+    const special = students.filter(s => s.is_special_class);
     const startIdx = Math.floor(Math.random() * classCount);
     special.forEach((s, idx) => {
         const target = (startIdx + idx) % classCount;
@@ -252,9 +251,9 @@ function assignGeneralStudents(
     assignedIds: Set<number>,
     config: AlgorithmConfig
 ): void {
-    // 1. 전출생 제외 및 무작위 셔플 후 석차 순 정렬
+    // 1. 무작위 셔플 후 석차 순 정렬
     const remaining = students
-        .filter(s => !assignedIds.has(s.id) && !s.is_transferring_out)
+        .filter(s => !assignedIds.has(s.id))
         .sort(() => Math.random() - 0.5) // 1차 셔플
         .sort((a, b) => (a.rank || 999) - (b.rank || 999)); // 2차 석차순 (동일 석차 내에서 셔플 유지)
 
@@ -303,8 +302,8 @@ function optimizeAllocation(
             for (let c2 = 0; c2 < classCount; c2++) {
                 if (c1 === c2) continue;
 
-                const s1List = allocation[c1].filter(s => !s.is_locked && !s.is_transferring_out);
-                const s2List = allocation[c2].filter(s => !s.is_locked && !s.is_transferring_out);
+                const s1List = allocation[c1].filter(s => !s.is_locked);
+                const s2List = allocation[c2].filter(s => !s.is_locked);
 
                 for (const s1 of s1List) {
                     for (const s2 of s2List) {
@@ -367,23 +366,14 @@ export function allocateStudents(
     const allocation: ClassAllocation = {};
     for (let i = 0; i < classCount; i++) allocation[i] = [];
 
-    // 전출생 완전 분리
-    const mainList = students.filter(s => !s.is_transferring_out);
-    const outboundList = students.filter(s => s.is_transferring_out);
-
     // [Step 1] 고정 배정 (Locked)
-    const assignedIds = assignFixedStudents(mainList, allocation, classCount, config);
+    const assignedIds = assignFixedStudents(students, allocation, classCount, config);
 
     // [Step 2] 벌점 기반 Greedy 배정 (석차순)
-    assignGeneralStudents(mainList, allocation, classCount, assignedIds, config);
+    assignGeneralStudents(students, allocation, classCount, assignedIds, config);
 
     // [Step 3] 스마트 스왑 최적화
     optimizeAllocation(allocation, classCount, config);
-
-    // [Step 4] 전출생 최종 합류 (끝 번호)
-    outboundList.forEach((s, idx) => {
-        allocation[idx % classCount].push(s);
-    });
 
     // 결과 조립
     const classes = Array.from({ length: classCount }, (_, i) => {
@@ -399,9 +389,9 @@ export function allocateStudents(
             students: sortedStudents,
             gender_stats: getGenderCounts(allocation[i]),
             special_factors: {
-                problem: allocation[i].filter(s => s.is_problem_student && !s.is_transferring_out).length,
-                special: allocation[i].filter(s => s.is_special_class && !s.is_transferring_out).length,
-                underachiever: allocation[i].filter(s => s.is_underachiever && !s.is_transferring_out).length,
+                problem: allocation[i].filter(s => s.is_problem_student).length,
+                special: allocation[i].filter(s => s.is_special_class).length,
+                underachiever: allocation[i].filter(s => s.is_underachiever).length,
                 transfer: allocation[i].filter(s => s.is_transferring_out).length
             }
         };
@@ -415,7 +405,7 @@ export function allocateStudents(
             warnings: [],
             errors: [],
             statistics: {
-                totalStudents: mainList.length,
+                totalStudents: students.length,
                 classCount,
                 genderBalance: [],
                 prevClassDistribution: [],
@@ -485,7 +475,7 @@ export function calculateViolationScore(result: AllocationResult): number {
         const fullNameCount = new Map<string, number>();
         const givenNameCount = new Map<string, number>();
 
-        cls.students.filter(s => !s.is_transferring_out).forEach(s => {
+        cls.students.forEach(s => {
             const fName = s.name.trim();
             const gName = extractGivenName(s.name);
             fullNameCount.set(fName, (fullNameCount.get(fName) || 0) + 1);
@@ -501,7 +491,7 @@ export function calculateViolationScore(result: AllocationResult): number {
         givenNameCount.forEach((count, gName) => {
             if (count > 1) {
                 const studentsWithThisGivenName = cls.students.filter(s =>
-                    !s.is_transferring_out && extractGivenName(s.name) === gName
+                    extractGivenName(s.name) === gName
                 );
                 const uniqueFullNames = new Set(studentsWithThisGivenName.map(s => s.name.trim())).size;
 
@@ -515,7 +505,7 @@ export function calculateViolationScore(result: AllocationResult): number {
     // 인원 불균형
     const weightedSizes = result.classes.map(cls => {
         const actual = cls.students.filter(s => !s.is_transferring_out).length;
-        const special = cls.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
+        const special = cls.students.filter(s => !s.is_transferring_out && s.is_special_class).length;
         return actual + special;
     });
     const sizeDiff = Math.max(...weightedSizes) - Math.min(...weightedSizes);
@@ -524,8 +514,8 @@ export function calculateViolationScore(result: AllocationResult): number {
 
     // 성비 불균형
     result.classes.forEach(cls => {
-        const m = cls.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
-        const f = cls.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
+        const m = cls.students.filter(s => !s.is_transferring_out && s.gender === 'M').length;
+        const f = cls.students.filter(s => !s.is_transferring_out && s.gender === 'F').length;
         const diff = Math.abs(m - f);
         score += diff * 50; // 기초 페널티 (성비 균형 유도)
         if (diff > 4) score += (diff - 4) * 2000; // 성비 편차 4명 초과당 2000점 (강화)
@@ -534,7 +524,7 @@ export function calculateViolationScore(result: AllocationResult): number {
     // 특별관리대상 분산 - 각각 따로 계산
     // 1. 문제행동 학생 분산
     const problemCounts = result.classes.map(cls =>
-        cls.students.filter(s => s.is_problem_student && !s.is_transferring_out).length
+        cls.students.filter(s => !s.is_transferring_out && s.is_problem_student).length
     );
     const problemMax = Math.max(...problemCounts);
     const problemMin = Math.min(...problemCounts);
@@ -546,7 +536,7 @@ export function calculateViolationScore(result: AllocationResult): number {
 
     // 2. 학습부진 학생 분산
     const underachieverCounts = result.classes.map(cls =>
-        cls.students.filter(s => s.is_underachiever && !s.is_transferring_out).length
+        cls.students.filter(s => !s.is_transferring_out && s.is_underachiever).length
     );
     const underMax = Math.max(...underachieverCounts);
     const underMin = Math.min(...underachieverCounts);
@@ -558,7 +548,7 @@ export function calculateViolationScore(result: AllocationResult): number {
 
     // 3. 특수학생 분산
     const specialCounts = result.classes.map(cls =>
-        cls.students.filter(s => s.is_special_class && !s.is_transferring_out).length
+        cls.students.filter(s => !s.is_transferring_out && s.is_special_class).length
     );
     const specialMax = Math.max(...specialCounts);
     const specialMin = Math.min(...specialCounts);
@@ -570,10 +560,10 @@ export function calculateViolationScore(result: AllocationResult): number {
 
     // 4. 특수학생 반 부담 감소 (특수학생 있는 반에 문제행동/부진아 적게 배정)
     result.classes.forEach(cls => {
-        const specialCount = cls.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
+        const specialCount = cls.students.filter(s => !s.is_transferring_out && s.is_special_class).length;
         if (specialCount > 0) {
-            const problemCount = cls.students.filter(s => s.is_problem_student && !s.is_transferring_out).length;
-            const underCount = cls.students.filter(s => s.is_underachiever && !s.is_transferring_out).length;
+            const problemCount = cls.students.filter(s => !s.is_transferring_out && s.is_problem_student).length;
+            const underCount = cls.students.filter(s => !s.is_transferring_out && s.is_underachiever).length;
             // 특수학생 있는 반에 문제행동/부진아가 있으면 높은 페널티
             score += (problemCount + underCount) * specialCount * 1000;
         }
@@ -586,7 +576,7 @@ export function calculateViolationScore(result: AllocationResult): number {
     const prevClasses = [...new Set(allStudents.map(s => s.section_number || 1))];
 
     prevClasses.forEach(prevNum => {
-        const fromPrev = allStudents.filter(s => (s.section_number || 1) === prevNum && !s.is_transferring_out);
+        const fromPrev = allStudents.filter(s => !s.is_transferring_out && (s.section_number || 1) === prevNum);
         if (fromPrev.length === 0) return;
 
         const dist = new Map<number, number>();
@@ -608,7 +598,7 @@ export function calculateViolationScore(result: AllocationResult): number {
 
     // 평균 석차 불균형 (추가)
     const rankStats = result.classes.map((c) => {
-        const ranks = c.students.filter(s => s.rank && !s.is_transferring_out).map(s => s.rank!);
+        const ranks = c.students.filter(s => s.rank).map(s => s.rank!);
         return ranks.length > 0 ? ranks.reduce((a, b) => a + b, 0) / ranks.length : 0;
     }).filter(avg => avg > 0);
 
@@ -623,7 +613,7 @@ export function calculateViolationScore(result: AllocationResult): number {
     // 5. 기존반 성별 쏠림 (2명 이상인데 모두 같은 성별인 경우)
     result.classes.forEach(cls => {
         const originMap = new Map<number, Student[]>();
-        cls.students.filter(s => !s.is_transferring_out).forEach(s => {
+        cls.students.forEach(s => {
             const origin = s.section_number || 0;
             if (origin === 0) return;
             if (!originMap.has(origin)) originMap.set(origin, []);

@@ -603,8 +603,8 @@ export default function AllocationPage() {
 
         // 6. 성비 불균형
         allocation.classes.forEach((c, i) => {
-            const male = c.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
-            const female = c.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
+            const male = c.students.filter(s => !s.is_transferring_out && s.gender === 'M').length;
+            const female = c.students.filter(s => !s.is_transferring_out && s.gender === 'F').length;
             if (Math.abs(male - female) > 4) { // 한 반 내부의 성비 편차가 큰 경우
                 violations.push({
                     id: `imbalance-gender-inner-${i}`,
@@ -619,8 +619,8 @@ export default function AllocationPage() {
         // 7. 특별관리대상 불균형
         const specialImbalance = allocation.classes.map((c, i) => ({
             name: getSectionName(i),
-            count: c.students.filter(s => (s.is_special_class || s.is_problem_student || s.is_underachiever) && !s.is_transferring_out).length,
-            ids: c.students.filter(s => (s.is_special_class || s.is_problem_student || s.is_underachiever) && !s.is_transferring_out).map(s => s.id)
+            count: c.students.filter(s => !s.is_transferring_out && (s.is_special_class || s.is_problem_student || s.is_underachiever)).length,
+            ids: c.students.filter(s => !s.is_transferring_out && (s.is_special_class || s.is_problem_student || s.is_underachiever)).map(s => s.id)
         }));
         const maxSpecial = [...specialImbalance].sort((a, b) => b.count - a.count)[0];
         const minSpecial = [...specialImbalance].sort((a, b) => a.count - b.count)[0];
@@ -637,11 +637,11 @@ export default function AllocationPage() {
 
         // 8. 평균 석차 불균형
         const rankStats = allocation.classes.map((c, i) => {
-            const ranks = c.students.filter(s => s.rank && !s.is_transferring_out).map(s => s.rank!);
+            const ranks = c.students.filter(s => !s.is_transferring_out && s.rank).map(s => s.rank!);
             return {
                 name: getSectionName(i),
                 avg: ranks.length > 0 ? ranks.reduce((a, b) => a + b, 0) / ranks.length : 0,
-                ids: c.students.filter(s => s.rank && !s.is_transferring_out).map(s => s.id)
+                ids: c.students.filter(s => !s.is_transferring_out && s.rank).map(s => s.id)
             };
         }).filter(s => s.avg > 0);
 
@@ -668,7 +668,7 @@ export default function AllocationPage() {
         });
 
         prevClasses.forEach(prevNum => {
-            const studentsFromPrev = allStudents.filter(s => (s.section_number || 1) === prevNum && !s.is_transferring_out);
+            const studentsFromPrev = allStudents.filter(s => !s.is_transferring_out && (s.section_number || 1) === prevNum);
             const dist = new Map<number, number>();
             studentsFromPrev.forEach(s => {
                 const nIdx = allocation.classes.findIndex(c => c.students.some(st => st.id === s.id));
@@ -713,8 +713,8 @@ export default function AllocationPage() {
         if (!allocation) return null;
 
         const totalStudents = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => !s.is_transferring_out).length, 0);
-        const maleCount = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length, 0);
-        const femaleCount = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length, 0);
+        const maleCount = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => !s.is_transferring_out && s.gender === 'M').length, 0);
+        const femaleCount = allocation.classes.reduce((sum, c) => sum + c.students.filter(s => !s.is_transferring_out && s.gender === 'F').length, 0);
         const sepGroupCount = sepGroupMap.size;
         const bindGroupCount = bindGroupMap.size;
         const duplicateCount = duplicateNames.size;
@@ -1389,26 +1389,40 @@ export default function AllocationPage() {
                     const groupEnd = Math.min(groupStart + classesPerRow, totalClasses);
                     const classesInGroup = allocation.classes.slice(groupStart, groupEnd);
 
-                    // 반 제목 행
+                    // 반 제목 행 (간소화)
                     const titleRow: any[] = [];
                     classesInGroup.forEach((newClass, idx) => {
                         const actualIdx = groupStart + idx;
                         const sectionName = getSectionName(actualIdx);
-                        const ourCount = newClass.students.filter(s => (s.section_number || 1) === origClassNum).length;
 
                         titleRow.push({
-                            v: `【${sectionName}】 (우리반 ${ourCount}명)`,
+                            v: sectionName,
                             s: { font: { bold: true, sz: 11 }, fill: { fgColor: { rgb: 'D0E0F0' } }, alignment: { horizontal: 'center' } }
                         });
-                        titleRow.push('', '', ''); // 나머지 컬럼
+                        titleRow.push('', '', '', ''); // 나머지 컬럼
                         if (idx < classesInGroup.length - 1) titleRow.push(''); // 간격
                     });
                     grid.push(titleRow);
 
-                    // 컬럼 헤더
+                    // 성별 통계 행
+                    const genderStatsRow: any[] = [];
+                    classesInGroup.forEach((newClass, idx) => {
+                        const maleCount = newClass.gender_stats.male;
+                        const femaleCount = newClass.gender_stats.female;
+
+                        genderStatsRow.push({
+                            v: `남 ${maleCount}명 / 여 ${femaleCount}명`,
+                            s: { font: { sz: 9, italic: true }, fill: { fgColor: { rgb: 'F0F0F0' } }, alignment: { horizontal: 'center' } }
+                        });
+                        genderStatsRow.push('', '', '', '');
+                        if (idx < classesInGroup.length - 1) genderStatsRow.push('');
+                    });
+                    grid.push(genderStatsRow);
+
+                    // 컬럼 헤더 (성별, 석차 추가)
                     const headerRow: any[] = [];
                     classesInGroup.forEach((_, idx) => {
-                        ['번호', '이름', '기존반', '비고'].forEach(h => {
+                        ['번호', '이름', '성별', '기존반', '석차'].forEach(h => {
                             headerRow.push({ v: h, s: { font: { bold: true }, fill: { fgColor: { rgb: 'F0F0F0' } }, alignment: { horizontal: 'center' } } });
                         });
                         if (idx < classesInGroup.length - 1) headerRow.push('');
@@ -1422,12 +1436,6 @@ export default function AllocationPage() {
 
                         return [...ourStudents].sort(koreanSort).concat([...otherStudents].sort(koreanSort)).map((student, sIdx) => {
                             const isOurs = (student.section_number || 1) === origClassNum;
-                            const specialTags = [];
-                            if (student.is_special_class) specialTags.push('특수');
-                            if (student.is_problem_student) specialTags.push('문제');
-                            if (student.is_underachiever) specialTags.push('부진');
-                            if (student.is_transferring_out) specialTags.push('전출');
-
                             const cellStyle = isOurs ? {
                                 fill: { fgColor: { rgb: 'FFFF99' } },
                                 font: { bold: true }
@@ -1436,8 +1444,9 @@ export default function AllocationPage() {
                             return [
                                 { v: sIdx + 1, s: cellStyle },
                                 { v: student.name, s: cellStyle },
+                                { v: student.gender === 'M' ? '남' : '여', s: cellStyle },
                                 { v: student.section_number || 1, s: cellStyle },
-                                { v: specialTags.join(', '), s: cellStyle }
+                                { v: student.rank || '-', s: cellStyle }
                             ];
                         });
                     });
@@ -1452,7 +1461,7 @@ export default function AllocationPage() {
                             if (i < classData.length) {
                                 row.push(...classData[i]);
                             } else {
-                                row.push('', '', '', '');
+                                row.push('', '', '', '', '');
                             }
                             if (idx < groupData.length - 1) row.push('');
                         });
@@ -1464,7 +1473,7 @@ export default function AllocationPage() {
                         grid.push([]);
                         const separatorRow = [];
                         for (let i = 0; i < classesInGroup.length; i++) {
-                            separatorRow.push('─────', '─────', '─────', '─────');
+                            separatorRow.push('─────', '─────', '─────', '─────', '─────');
                             if (i < classesInGroup.length - 1) separatorRow.push('');
                         }
                         grid.push(separatorRow);
@@ -1479,8 +1488,9 @@ export default function AllocationPage() {
                 for (let i = 0; i < classesPerRow; i++) {
                     colWidths.push({ wch: 6 });   // 번호
                     colWidths.push({ wch: 10 });  // 이름
+                    colWidths.push({ wch: 6 });   // 성별
                     colWidths.push({ wch: 7 });   // 기존반
-                    colWidths.push({ wch: 12 });  // 비고
+                    colWidths.push({ wch: 7 });   // 석차
                     if (i < classesPerRow - 1) colWidths.push({ wch: 2 }); // 간격
                 }
                 worksheet['!cols'] = colWidths;
@@ -2265,30 +2275,30 @@ export default function AllocationPage() {
                                     }}>
                                         <span style={{ fontWeight: 600 }}>{getSectionName(idx)}</span>
                                         <div style={{ display: 'flex', gap: '1.25rem', alignItems: 'center' }}>
-                                            <span style={{ color: '#3b82f6', minWidth: '40px' }}>남 {cls.gender_stats.male - cls.students.filter(s => s.gender === 'M' && s.is_transferring_out).length}</span>
-                                            <span style={{ color: '#ec4899', minWidth: '40px' }}>여 {cls.gender_stats.female - cls.students.filter(s => s.gender === 'F' && s.is_transferring_out).length}</span>
+                                            <span style={{ color: '#3b82f6', minWidth: '40px' }}>남 {cls.gender_stats.male}</span>
+                                            <span style={{ color: '#ec4899', minWidth: '40px' }}>여 {cls.gender_stats.female}</span>
                                             {cls.special_factors.special > 0 && (
                                                 <span style={{ color: '#a855f7', minWidth: '45px', fontSize: '0.85rem' }}>특수 {cls.special_factors.special}</span>
                                             )}
                                         </div>
                                         <div style={{ textAlign: 'right', minWidth: '100px' }}>
                                             <span style={{ fontWeight: 'bold', color: '#6366f1' }}>
-                                                {cls.students.filter(s => !s.is_transferring_out).length}명
+                                                {cls.students.length}명
                                             </span>
                                             {cls.special_factors.transfer > 0 && (
                                                 <div style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '2px' }}>
-                                                    + 전출예정 {cls.special_factors.transfer}명
+                                                    (전출예정 {cls.special_factors.transfer}명 포함)
                                                 </div>
                                             )}
                                         </div>
                                     </div>
                                 ))}
                             </div>
-                            <div style={{ 
-                                marginTop: '1.5rem', 
-                                padding: '1.25rem', 
-                                background: 'rgba(99, 102, 241, 0.08)', 
-                                borderRadius: '12px', 
+                            <div style={{
+                                marginTop: '1.5rem',
+                                padding: '1.25rem',
+                                background: 'rgba(99, 102, 241, 0.08)',
+                                borderRadius: '12px',
                                 border: '1px solid rgba(99, 102, 241, 0.2)',
                                 display: 'flex',
                                 flexDirection: 'column',
@@ -3796,10 +3806,10 @@ export default function AllocationPage() {
                                             color: 'var(--text-secondary)'
                                         }}>
                                             <div>
-                                                <span style={{ fontWeight: '600' }}>총원:</span> {cls.students.filter(s => !s.is_transferring_out).length}명
+                                                <span style={{ fontWeight: '600' }}>총원:</span> {cls.students.length}명
                                                 {cls.special_factors.transfer > 0 && (
-                                                    <span style={{ marginLeft: '0.3rem', color: 'var(--text-muted)' }}>
-                                                        + 전출예정 {cls.special_factors.transfer}명
+                                                    <span style={{ marginLeft: '0', color: 'var(--text-muted)' }}>
+                                                        (전출예정{cls.special_factors.transfer})
                                                     </span>
                                                 )}
                                             </div>

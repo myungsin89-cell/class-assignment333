@@ -155,7 +155,7 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
 
     // 3. 문제행동 학생 편차
     const problemCounts = allocation.classes.map(cls =>
-        cls.students.filter(s => s.is_problem_student && !s.is_transferring_out).length
+        cls.students.filter(s => !s.is_transferring_out && s.is_problem_student).length
     );
     const problemMax = Math.max(...problemCounts);
     const problemMin = Math.min(...problemCounts);
@@ -167,14 +167,14 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
             severity: (problemMax - problemMin - 1) * 5000,
             description: `문제행동 학생 편차: ${maxClass + 1}반(${problemMax}명) vs ${minClass + 1}반(${problemMin}명) - 편차 ${problemMax - problemMin}명`,
             affectedClasses: [maxClass + 1],
-            studentIds: allocation.classes[maxClass].students.filter(s => s.is_problem_student).map(s => s.id),
+            studentIds: allocation.classes[maxClass].students.filter(s => !s.is_transferring_out && s.is_problem_student).map(s => s.id),
             details: { maxClass: maxClass + 1, minClass: minClass + 1, maxCount: problemMax, minCount: problemMin }
         });
     }
 
     // 4. 학습부진 학생 편차
     const underCounts = allocation.classes.map(cls =>
-        cls.students.filter(s => s.is_underachiever && !s.is_transferring_out).length
+        cls.students.filter(s => !s.is_transferring_out && s.is_underachiever).length
     );
     const underMax = Math.max(...underCounts);
     const underMin = Math.min(...underCounts);
@@ -186,22 +186,22 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
             severity: (underMax - underMin - 1) * 5000,
             description: `학습부진 학생 편차: ${maxClass + 1}반(${underMax}명) vs ${minClass + 1}반(${underMin}명) - 편차 ${underMax - underMin}명`,
             affectedClasses: [maxClass + 1],
-            studentIds: allocation.classes[maxClass].students.filter(s => s.is_underachiever).map(s => s.id),
+            studentIds: allocation.classes[maxClass].students.filter(s => !s.is_transferring_out && s.is_underachiever).map(s => s.id),
             details: { maxClass: maxClass + 1, minClass: minClass + 1, maxCount: underMax, minCount: underMin }
         });
     }
 
     // 5. 성비 불균형
     allocation.classes.forEach((cls, idx) => {
-        const m = cls.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
-        const f = cls.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
+        const m = cls.students.filter(s => !s.is_transferring_out && s.gender === 'M').length;
+        const f = cls.students.filter(s => !s.is_transferring_out && s.gender === 'F').length;
         if (Math.abs(m - f) > 4) {
             issues.push({
                 type: 'gender_imbalance',
                 severity: (Math.abs(m - f) - 4) * 2000,
                 description: `성비 불균형: ${idx + 1}반 - 남${m}명, 여${f}명 (편차 ${Math.abs(m - f)}명)`,
                 affectedClasses: [idx + 1],
-                studentIds: cls.students.filter(s => s.gender === (m > f ? 'M' : 'F')).map(s => s.id),
+                studentIds: cls.students.filter(s => !s.is_transferring_out && s.gender === (m > f ? 'M' : 'F')).map(s => s.id),
                 details: { classId: idx + 1, male: m, female: f }
             });
         }
@@ -210,7 +210,7 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
     // 6. 인원 불균형
     const weightedSizes = allocation.classes.map(cls => {
         const actual = cls.students.filter(s => !s.is_transferring_out).length;
-        const special = cls.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
+        const special = cls.students.filter(s => !s.is_transferring_out && s.is_special_class).length;
         return actual + special;
     });
     const sizeMax = Math.max(...weightedSizes);
@@ -229,7 +229,7 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
 
     // 7. 특수학생 편차
     const specialCounts = allocation.classes.map(cls =>
-        cls.students.filter(s => s.is_special_class && !s.is_transferring_out).length
+        cls.students.filter(s => !s.is_transferring_out && s.is_special_class).length
     );
     const sMax = Math.max(...specialCounts);
     const sMin = Math.min(...specialCounts);
@@ -251,7 +251,7 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
     );
     const prevClasses = [...new Set(allStudents.map(s => s.section_number || 1))];
     prevClasses.forEach(prevNum => {
-        const fromPrev = allStudents.filter(s => (s.section_number || 1) === prevNum && !s.is_transferring_out);
+        const fromPrev = allStudents.filter(s => (s.section_number || 1) === prevNum);
         if (fromPrev.length === 0) return;
 
         const dist = new Map<number, number>();
@@ -304,10 +304,10 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
 
     // 10. 평균 석차 불균형 (추가)
     const rankStats = allocation.classes.map((c) => {
-        const ranks = c.students.filter(s => s.rank && !s.is_transferring_out).map(s => s.rank!);
+        const ranks = c.students.filter(s => s.rank).map(s => s.rank!);
         return {
             avg: ranks.length > 0 ? ranks.reduce((a, b) => a + b, 0) / ranks.length : 0,
-            ids: c.students.filter(s => s.rank && !s.is_transferring_out).map(s => s.id)
+            ids: c.students.filter(s => s.rank).map(s => s.id)
         };
     }).filter(s => s.avg > 0);
 
@@ -341,7 +341,7 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
                 ? "💡 위 문제들을 해결하면서 인원/성비 균형을 더 완벽하게 맞출 수 있습니다."
                 : "✨ 모든 규칙이 지켜졌습니다! 클릭 시 허용 범위 내에서 인원/성비 등 미세한 균형을 최대한 맞춰 완성도를 높입니다.",
             affectedClasses: allocation.classes.map((_, i) => i + 1),
-            studentIds: allocation.classes.flatMap(c => c.students.filter(s => !s.is_transferring_out).map(s => s.id)),
+            studentIds: allocation.classes.flatMap(c => c.students.map(s => s.id)),
             details: { totalScore }
         });
     }
@@ -351,7 +351,7 @@ export function detectIssues(allocation: AllocationResult): Issue[] {
     // 5. 기존반 성별 쏠림 (기존반 배분에서 특정 성별이 한명도 없으면)
     allocation.classes.forEach((cls, idx) => {
         const originMap = new Map<number, Student[]>();
-        cls.students.filter(s => !s.is_transferring_out).forEach(s => {
+        cls.students.forEach(s => {
             const origin = s.section_number || 0;
             if (origin === 0) return;
             if (!originMap.has(origin)) originMap.set(origin, []);
@@ -424,19 +424,19 @@ export function findSwapSolutions(
             candidateStudents = issue.details.students.slice(1);
         } else if (issue.type === 'problem_imbalance') {
             candidateStudents = affectedClass.students.filter(s =>
-                s.is_problem_student && !s.is_transferring_out
+                s.is_problem_student
             );
         } else if (issue.type === 'underachiever_imbalance') {
             candidateStudents = affectedClass.students.filter(s =>
-                s.is_underachiever && !s.is_transferring_out
+                s.is_underachiever
             );
         } else if (issue.type === 'gender_imbalance' && issue.details) {
             const targetGender = issue.details.male > issue.details.female ? 'M' : 'F';
             candidateStudents = affectedClass.students.filter(s =>
-                s.gender === targetGender && !s.is_transferring_out
+                s.gender === targetGender
             );
         } else {
-            candidateStudents = affectedClass.students.filter(s => !s.is_transferring_out);
+            candidateStudents = affectedClass.students;
         }
 
         // 다른 반의 학생들과 교환 시뮬레이션
@@ -446,7 +446,7 @@ export function findSwapSolutions(
             candidateStudents.forEach(studentA => {
                 // 두 단계를 거쳐 탐색: 1. 성별이 같은 학생 우선, 2. 다른 성별 탐색
                 // 단, 성비 불균형 문제 해결 시에는 성별이 다른 학생 교환이 필수적일 수 있음
-                const otherStudents = otherClass.students.filter(s => !s.is_transferring_out);
+                const otherStudents = otherClass.students;
 
                 // 성비 불균형 이외의 문제라면 같은 성별 우선 탐색하여 통계적 균형 유지
                 const prioritizedStudents = issue.type !== 'gender_imbalance'
@@ -489,14 +489,14 @@ export function findSwapSolutions(
                             const classAAfter = simulatedAllocation.classes[affectedClassIdx];
                             const classBAfter = simulatedAllocation.classes[otherIdx];
 
-                            const countA = classAAfter.students.filter(s => !s.is_transferring_out).length;
-                            const countB = classBAfter.students.filter(s => !s.is_transferring_out).length;
-                            const specialA = classAAfter.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
-                            const specialB = classBAfter.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
-                            const maleA = classAAfter.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
-                            const femaleA = classAAfter.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
-                            const maleB = classBAfter.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
-                            const femaleB = classBAfter.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
+                            const countA = classAAfter.students.length;
+                            const countB = classBAfter.students.length;
+                            const specialA = classAAfter.students.filter(s => s.is_special_class).length;
+                            const specialB = classBAfter.students.filter(s => s.is_special_class).length;
+                            const maleA = classAAfter.students.filter(s => s.gender === 'M').length;
+                            const femaleA = classAAfter.students.filter(s => s.gender === 'F').length;
+                            const maleB = classBAfter.students.filter(s => s.gender === 'M').length;
+                            const femaleB = classBAfter.students.filter(s => s.gender === 'F').length;
 
                             // 설명 생성
                             let explanation = "";
@@ -512,12 +512,12 @@ export function findSwapSolutions(
                             } else if (issue.type === 'bind_violation') {
                                 explanation = `"함께 배정" 제약을 충족합니다. ${studentA.name} 학생을 ${toName}으로 보내 그룹원들과 같은 반이 되도록 합니다.`;
                             } else if (issue.type === 'problem_imbalance') {
-                                const probA = classAAfter.students.filter(s => s.is_problem_student && !s.is_transferring_out).length;
-                                const probB = classBAfter.students.filter(s => s.is_problem_student && !s.is_transferring_out).length;
+                                const probA = classAAfter.students.filter(s => s.is_problem_student).length;
+                                const probB = classBAfter.students.filter(s => s.is_problem_student).length;
                                 explanation = `문제행동 학생 편차를 줄입니다. 교환 후 ${fromName}(${probA}명), ${toName}(${probB}명)으로 균형이 개선됩니다.`;
                             } else if (issue.type === 'underachiever_imbalance') {
-                                const undA = classAAfter.students.filter(s => s.is_underachiever && !s.is_transferring_out).length;
-                                const undB = classBAfter.students.filter(s => s.is_underachiever && !s.is_transferring_out).length;
+                                const undA = classAAfter.students.filter(s => s.is_underachiever).length;
+                                const undB = classBAfter.students.filter(s => s.is_underachiever).length;
                                 explanation = `학습부진 학생 편차를 줄입니다. 교환 후 ${fromName}(${undA}명), ${toName}(${undB}명)으로 균형이 개선됩니다.`;
                             } else if (issue.type === 'gender_imbalance') {
                                 explanation = `남녀 성비를 조정합니다. 결과적으로 ${fromName}(남${maleA}:여${femaleA}), ${toName}(남${maleB}:여${femaleB})로 성비 불균형이 해소됩니다.`;
@@ -527,16 +527,16 @@ export function findSwapSolutions(
                                 explanation = `반별 인원 편차를 줄입니다. 가중치 인원이 ${fromName}(${weightA}명), ${toName}(${weightB}명)으로 조정되어 균일해집니다.`;
                             } else if (issue.type === 'previous_class_imbalance') {
                                 const prevNum = studentA.section_number || 1;
-                                const pA = classAAfter.students.filter(s => (s.section_number || 1) === prevNum && !s.is_transferring_out).length;
-                                const pB = classBAfter.students.filter(s => (s.section_number || 1) === prevNum && !s.is_transferring_out).length;
+                                const pA = classAAfter.students.filter(s => (s.section_number || 1) === prevNum).length;
+                                const pB = classBAfter.students.filter(s => (s.section_number || 1) === prevNum).length;
                                 explanation = `기존 ${prevNum}반 학생 쏠림을 해결합니다. 교환 후 ${fromName}(${pA}명), ${toName}(${pB}명)으로 적절히 분산됩니다.`;
 
                             } else if (issue.type === 'origin_gender_imbalance') {
                                 const prevNum = issue.details.origin;
                                 explanation = `기존 ${prevNum}반 학생들의 성별 쏠림을 완화합니다. 다른 성별의 학생을 포함시켜 균형을 맞춥니다.`;
                             } else if (issue.type === 'rank_imbalance') {
-                                const avgA = classAAfter.students.filter(s => s.rank && !s.is_transferring_out).reduce((a, b) => a + (b.rank || 0), 0) / (classAAfter.students.filter(s => s.rank && !s.is_transferring_out).length || 1);
-                                const avgB = classBAfter.students.filter(s => s.rank && !s.is_transferring_out).reduce((a, b) => a + (b.rank || 0), 0) / (classBAfter.students.filter(s => s.rank && !s.is_transferring_out).length || 1);
+                                const avgA = classAAfter.students.filter(s => s.rank).reduce((a, b) => a + (b.rank || 0), 0) / (classAAfter.students.filter(s => s.rank).length || 1);
+                                const avgB = classBAfter.students.filter(s => s.rank).reduce((a, b) => a + (b.rank || 0), 0) / (classBAfter.students.filter(s => s.rank).length || 1);
                                 explanation = `학급 간 성적 격차를 줄입니다. 교환 후 ${fromName}(평균 ${avgA.toFixed(1)}등), ${toName}(평균 ${avgB.toFixed(1)}등)으로 균형이 개선됩니다.`;
                             } else if (issue.type === 'optimization') {
                                 explanation = `전체적인 균형을 한 단계 더 높입니다. (인원 ${countA}:${countB} / 성비 남${maleA}:여${femaleA} 등 미세 조정)`;
@@ -545,36 +545,36 @@ export function findSwapSolutions(
                             }
 
                             // 구체적 수치 변화 (v2.2)
-                            const beforeMaleA = affectedClass.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
-                            const beforeFemaleA = affectedClass.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
-                            const beforeMaleB = otherClass.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
-                            const beforeFemaleB = otherClass.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
+                            const beforeMaleA = affectedClass.students.filter(s => s.gender === 'M').length;
+                            const beforeFemaleA = affectedClass.students.filter(s => s.gender === 'F').length;
+                            const beforeMaleB = otherClass.students.filter(s => s.gender === 'M').length;
+                            const beforeFemaleB = otherClass.students.filter(s => s.gender === 'F').length;
 
-                            const afterMaleA = classAAfter.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
-                            const afterFemaleA = classAAfter.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
-                            const afterMaleB = classBAfter.students.filter(s => s.gender === 'M' && !s.is_transferring_out).length;
-                            const afterFemaleB = classBAfter.students.filter(s => s.gender === 'F' && !s.is_transferring_out).length;
+                            const afterMaleA = classAAfter.students.filter(s => s.gender === 'M').length;
+                            const afterFemaleA = classAAfter.students.filter(s => s.gender === 'F').length;
+                            const afterMaleB = classBAfter.students.filter(s => s.gender === 'M').length;
+                            const afterFemaleB = classBAfter.students.filter(s => s.gender === 'F').length;
 
-                            const beforeAvgA = affectedClass.students.filter(s => s.rank && !s.is_transferring_out).reduce((a, b) => a + (b.rank || 0), 0) / (affectedClass.students.filter(s => s.rank && !s.is_transferring_out).length || 1);
-                            const beforeAvgB = otherClass.students.filter(s => s.rank && !s.is_transferring_out).reduce((a, b) => a + (b.rank || 0), 0) / (otherClass.students.filter(s => s.rank && !s.is_transferring_out).length || 1);
+                            const beforeAvgA = affectedClass.students.filter(s => s.rank).reduce((a, b) => a + (b.rank || 0), 0) / (affectedClass.students.filter(s => s.rank).length || 1);
+                            const beforeAvgB = otherClass.students.filter(s => s.rank).reduce((a, b) => a + (b.rank || 0), 0) / (otherClass.students.filter(s => s.rank).length || 1);
 
-                            const afterAvgA = classAAfter.students.filter(s => s.rank && !s.is_transferring_out).reduce((a, b) => a + (b.rank || 0), 0) / (classAAfter.students.filter(s => s.rank && !s.is_transferring_out).length || 1);
-                            const afterAvgB = classBAfter.students.filter(s => s.rank && !s.is_transferring_out).reduce((a, b) => a + (b.rank || 0), 0) / (classBAfter.students.filter(s => s.rank && !s.is_transferring_out).length || 1);
+                            const afterAvgA = classAAfter.students.filter(s => s.rank).reduce((a, b) => a + (b.rank || 0), 0) / (classAAfter.students.filter(s => s.rank).length || 1);
+                            const afterAvgB = classBAfter.students.filter(s => s.rank).reduce((a, b) => a + (b.rank || 0), 0) / (classBAfter.students.filter(s => s.rank).length || 1);
 
-                            const beforeWeightA = affectedClass.students.filter(s => !s.is_transferring_out).length + affectedClass.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
-                            const beforeWeightB = otherClass.students.filter(s => !s.is_transferring_out).length + otherClass.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
+                            const beforeWeightA = affectedClass.students.length + affectedClass.students.filter(s => s.is_special_class).length;
+                            const beforeWeightB = otherClass.students.length + otherClass.students.filter(s => s.is_special_class).length;
 
-                            const afterWeightA = classAAfter.students.filter(s => !s.is_transferring_out).length + classAAfter.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
-                            const afterWeightB = classBAfter.students.filter(s => !s.is_transferring_out).length + classBAfter.students.filter(s => s.is_special_class && !s.is_transferring_out).length;
+                            const afterWeightA = classAAfter.students.length + classAAfter.students.filter(s => s.is_special_class).length;
+                            const afterWeightB = classBAfter.students.length + classBAfter.students.filter(s => s.is_special_class).length;
 
                             // 기존반 분산 정보 (v2.3)
                             const prevNumA = studentA.section_number || 1;
                             const prevNumB = studentB.section_number || 1;
 
-                            const beforePrevAInA = affectedClass.students.filter(s => (s.section_number || 1) === prevNumA && !s.is_transferring_out).length;
-                            const afterPrevAInA = classAAfter.students.filter(s => (s.section_number || 1) === prevNumA && !s.is_transferring_out).length;
-                            const beforePrevBInB = otherClass.students.filter(s => (s.section_number || 1) === prevNumB && !s.is_transferring_out).length;
-                            const afterPrevBInB = classBAfter.students.filter(s => (s.section_number || 1) === prevNumB && !s.is_transferring_out).length;
+                            const beforePrevAInA = affectedClass.students.filter(s => (s.section_number || 1) === prevNumA).length;
+                            const afterPrevAInA = classAAfter.students.filter(s => (s.section_number || 1) === prevNumA).length;
+                            const beforePrevBInB = otherClass.students.filter(s => (s.section_number || 1) === prevNumB).length;
+                            const afterPrevBInB = classBAfter.students.filter(s => (s.section_number || 1) === prevNumB).length;
 
                             classSolutions.push({
                                 issue,
@@ -642,7 +642,7 @@ export function findComplexSwapSolutions(
     const numClasses = allocation.classes.length;
 
     // 전체 통계 (설명용)
-    const allStudents = allocation.classes.flatMap(c => c.students.filter(s => !s.is_transferring_out));
+    const allStudents = allocation.classes.flatMap(c => c.students);
     const totalMales = allStudents.filter(s => s.gender === 'M').length;
     const totalFemales = allStudents.filter(s => s.gender === 'F').length;
     const avgMale = (totalMales / numClasses).toFixed(1);
