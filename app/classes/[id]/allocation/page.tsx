@@ -1686,6 +1686,24 @@ export default function AllocationPage() {
         setShowAiModal(true);
     };
 
+    // 개별 위반 AI 해결
+    const handleSolveViolation = (violation: any) => {
+        if (!allocation) return;
+
+        // 해당 위반만 타겟팅
+        const targetIssues = [violation];
+        const solutions = findSwapSolutions(allocation, targetIssues, 1);
+
+        if (solutions.length === 0) {
+            setToast({ message: '해결 방법을 찾을 수 없습니다.', type: 'error' });
+            return;
+        }
+
+        // 첫 번째 솔루션 자동 적용
+        const solution = solutions[0];
+        performSwap(solution.studentA, solution.studentB);
+        setToast({ message: `${solution.studentA.name} ↔ ${solution.studentB.name} 교환 완료`, type: 'success' });
+    };
 
     // AI 솔루션 선택/해제
     const toggleSolution = (index: number) => {
@@ -3327,10 +3345,38 @@ export default function AllocationPage() {
                                             </div>
                                         </div>
 
-                                        {v.studentIds.length > 0 && (v.type as string) !== 'imbalance' && (
-                                            <div style={{ color: '#6366f1', fontSize: '0.7rem', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
-                                                이동 ➔
-                                            </div>
+                                        {v.studentIds.length > 0 && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleSolveViolation(v);
+                                                }}
+                                                style={{
+                                                    padding: '0.4rem 0.75rem',
+                                                    background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                                                    color: 'white',
+                                                    border: 'none',
+                                                    borderRadius: '6px',
+                                                    fontSize: '0.7rem',
+                                                    fontWeight: 'bold',
+                                                    cursor: 'pointer',
+                                                    transition: 'all 0.2s',
+                                                    whiteSpace: 'nowrap',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '0.3rem'
+                                                }}
+                                                onMouseEnter={(e) => {
+                                                    e.currentTarget.style.transform = 'scale(1.05)';
+                                                    e.currentTarget.style.filter = 'brightness(1.1)';
+                                                }}
+                                                onMouseLeave={(e) => {
+                                                    e.currentTarget.style.transform = 'scale(1)';
+                                                    e.currentTarget.style.filter = 'brightness(1)';
+                                                }}
+                                            >
+                                                🤖 AI해결
+                                            </button>
                                         )}
                                     </div>
                                 ))}
