@@ -16,6 +16,7 @@
     "@heroicons/react": "^2.2.0",
     "bcryptjs": "^2.4.3",
     "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
     "next": "^15.2.0",
     "postgres": "^3.4.7",
     "react": "19.2.0",

@@ -9,6 +9,8 @@ import StepCard from '../../../components/StepCard';
 import Toast, { ToastType } from '../../../components/Toast';
 import ConfirmModal from '../../../components/ConfirmModal';
 import * as XLSX from 'xlsx-js-style';
+import ExcelJS from 'exceljs';
+
 
 // 제약조건 파싱 함수
 function parseConstraints(student: Student) {
@@ -1602,65 +1604,117 @@ export default function AllocationPage() {
         setShowDownloadDropdown(false);
     };
 
-    // 양식 기준 엑셀 다운로드 (학급편성 붙임 서식) - 템플릿 기반
+    // 양식 기준 엑셀 다운로드 (학급편성 붙임 서식) - ExcelJS 기반
     const handleExportTemplateFormat = async () => {
         if (!allocation || !classData) return;
 
+        // Helper function to format birth date (remove dots)
+        const formatBirthDate = (birthDate: string | null | undefined): string => {
+            if (!birthDate) return '';
+            return birthDate.replace(/\./g, '').replace(/ /g, '');
+        };
+
         try {
-            // Load template file
+            // Load template file with ExcelJS
             const templateResponse = await fetch('/templates/학급편성_붙임_서식_템플릿.xlsx');
             const templateBuffer = await templateResponse.arrayBuffer();
-            const workbook = XLSX.read(templateBuffer, { type: 'array', cellStyles: true });
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.load(templateBuffer);
 
             // ===== 1. 붙임1 (Summary) Sheet =====
-            const summarySheet = workbook.Sheets['붙임1'];
+            const summarySheet = workbook.getWorksheet('붙임1');
+            if (summarySheet) {
+                // Fill in grade information
+                summarySheet.getCell('A4').value = `◈ 2025학년도 현재 학년 :  (${classData.grade})학년`;
+                summarySheet.getCell('A6').value = `◈ 2026학년도 진급 학년 :  (${classData.grade + 1})학년 - (${allocation.classes.length})학급`;
 
-            // Fill in grade information
-            XLSX.utils.sheet_add_aoa(summarySheet, [[`◈ 2025학년도 현재 학년 :  (${classData.grade})학년`]], { origin: 'A4' });
-            XLSX.utils.sheet_add_aoa(summarySheet, [[`◈ 2026학년도 진급 학년 :  (${classData.grade + 1})학년 - (${allocation.classes.length})학급`]], { origin: 'A6' });
+                // Fill in class statistics (starting from row 9)
+                allocation.classes.forEach((cls, idx) => {
+                    const rowIndex = 9 + idx;
+                    const sectionName = getSectionName(idx).replace('반', '');
+                    const maleCount = cls.gender_stats.male;
+                    const femaleCount = cls.gender_stats.female;
+                    const total = cls.students.length;
 
-            // Fill in class statistics (starting from row 9, which is index 8)
-            allocation.classes.forEach((cls, idx) => {
-                const rowIndex = 8 + idx; // Row 9 is index 8
-                const sectionName = getSectionName(idx).replace('반', '');
-                const maleCount = cls.gender_stats.male;
-                const femaleCount = cls.gender_stats.female;
-                const total = cls.students.length;
+                    const row = summarySheet.getRow(rowIndex);
+                    row.getCell(1).value = sectionName;
+                    row.getCell(2).value = maleCount;
+                    row.getCell(3).value = femaleCount;
+                    row.getCell(4).value = total;
+                    row.getCell(5).value = '';
+                    row.commit();
+                });
 
-                XLSX.utils.sheet_add_aoa(summarySheet, [[sectionName, maleCount, femaleCount, total, '']], { origin: `A${rowIndex + 1}` });
-            });
+                // Fill in totals
+                const totalRow = 9 + allocation.classes.length;
+                const totalMale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.male, 0);
+                const totalFemale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.female, 0);
+                const totalStudents = allocation.classes.reduce((sum, cls) => sum + cls.students.length, 0);
 
-            // Fill in totals
-            const totalRow = 8 + allocation.classes.length;
-            const totalMale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.male, 0);
-            const totalFemale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.female, 0);
-            const totalStudents = allocation.classes.reduce((sum, cls) => sum + cls.students.length, 0);
-            XLSX.utils.sheet_add_aoa(summarySheet, [['총계', totalMale, totalFemale, totalStudents, null]], { origin: `A${totalRow + 1}` });
+                const row = summarySheet.getRow(totalRow);
+                row.getCell(1).value = '총계';
+                row.getCell(2).value = totalMale;
+                row.getCell(3).value = totalFemale;
+                row.getCell(4).value = totalStudents;
+                row.commit();
 
-            // Fill in date
-            const dateRow = totalRow + 2;
-            XLSX.utils.sheet_add_aoa(summarySheet, [[new Date().toLocaleDateString('ko-KR')]], { origin: `A${dateRow + 1}` });
+                // Fill in date
+                const dateRow = totalRow + 2;
+                summarySheet.getCell(`A${dateRow}`).value = new Date().toLocaleDateString('ko-KR');
 
-            // Fill in footer
-            const footerRow = dateRow + 2;
-            XLSX.utils.sheet_add_aoa(summarySheet, [[`(${classData.grade + 1})학년 부장 :                         (인)`]], { origin: `A${footerRow + 1}` });
+                // Fill in footer
+                const footerRow = dateRow + 2;
+                summarySheet.getCell(`A${footerRow}`).value = `(${classData.grade + 1})학년 부장 :                         (인)`;
+            }
 
-
-            // ===== 2. 기존 반 Sheets (1반, 2반, 3반...) =====
+            // ===== 2. 기존 반 Sheets =====
             const originalSections = [...new Set(allStudents.map(s => s.section_number || 1))].sort((a, b) => a - b);
-            const templateOriginalSheet = workbook.Sheets['1반'];
+            const templateOriginalSheet = workbook.getWorksheet('1반');
 
-            // Remove template sheets we'll replace
-            delete workbook.Sheets['1반'];
-            delete workbook.Sheets['가반'];
-            workbook.SheetNames = workbook.SheetNames.filter(name => name !== '1반' && name !== '가반');
+            // Remove template sheets
+            const sheet1ban = workbook.getWorksheet('1반');
+            const sheetGaban = workbook.getWorksheet('가반');
+            if (sheet1ban) workbook.removeWorksheet(sheet1ban.id);
+            if (sheetGaban) workbook.removeWorksheet(sheetGaban.id);
 
             originalSections.forEach(sectionNum => {
-                // Clone template sheet
-                const newSheet = JSON.parse(JSON.stringify(templateOriginalSheet));
+                if (!templateOriginalSheet) return;
+
+                // Clone template worksheet
+                const newSheet = workbook.addWorksheet(`${sectionNum}반`, {
+                    state: 'visible'
+                });
+
+                // Copy all properties from template
+                templateOriginalSheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+                    const newRow = newSheet.getRow(rowNumber);
+                    newRow.height = row.height;
+
+                    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                        const newCell = newRow.getCell(colNumber);
+                        newCell.value = cell.value;
+                        newCell.style = { ...cell.style };
+                    });
+                    newRow.commit();
+                });
+
+                // Copy column widths
+                templateOriginalSheet.columns.forEach((col, idx) => {
+                    if (newSheet.columns[idx]) {
+                        newSheet.columns[idx].width = col.width;
+                    }
+                });
+
+                // Copy merges
+                if (templateOriginalSheet.model.merges) {
+                    templateOriginalSheet.model.merges.forEach(merge => {
+                        newSheet.mergeCells(merge);
+                    });
+                }
 
                 // Update title and header
-                XLSX.utils.sheet_add_aoa(newSheet, [[`인천이음초등학교`, null, null, null, `2025학년도 (${classData.grade})학년 (${sectionNum})반  담임 :`]], { origin: 'A3' });
+                newSheet.getCell('A3').value = `인천이음초등학교`;
+                newSheet.getCell('E3').value = `2025학년도 (${classData.grade})학년 (${sectionNum})반  담임 :`;
 
                 // Get students from this original section
                 const studentsInSection = allocation.classes.flatMap((cls, classIndex) =>
@@ -1674,60 +1728,92 @@ export default function AllocationPage() {
 
                 // Fill in student data (starting from row 5)
                 studentsInSection.forEach((student, idx) => {
-                    const rowIndex = 4 + idx; // Row 5 is index 4
-                    XLSX.utils.sheet_add_aoa(newSheet, [[
-                        idx + 1,
-                        student.name,
-                        student.gender === 'M' ? '남성' : '여성',
-                        student.birth_date || '',
-                        student.assignedSection,
-                        student.notes || '',
-                        student.contact || ''
-                    ]], { origin: `A${rowIndex + 1}` });
-                });
+                    const rowIndex = 5 + idx;
+                    const row = newSheet.getRow(rowIndex);
 
-                // Add sheet to workbook
-                workbook.Sheets[`${sectionNum}반`] = newSheet;
-                workbook.SheetNames.splice(1 + sectionNum, 0, `${sectionNum}반`);
+                    row.getCell(1).value = idx + 1;
+                    row.getCell(2).value = student.name;
+                    row.getCell(3).value = student.gender === 'M' ? '남성' : '여성';
+                    row.getCell(4).value = formatBirthDate(student.birth_date);
+                    row.getCell(5).value = student.assignedSection;
+                    row.getCell(6).value = student.notes || '';
+                    row.getCell(7).value = student.contact || '';
+                    row.commit();
+                });
             });
 
             // ===== 3. 새 반 Sheets =====
-            const templateNewSheet = JSON.parse(JSON.stringify(templateOriginalSheet)); // Use same template structure
-
             allocation.classes.forEach((cls, idx) => {
-                // Clone template sheet
-                const newSheet = JSON.parse(JSON.stringify(templateNewSheet));
+                if (!templateOriginalSheet) return;
+
                 const sectionName = getSectionName(idx).replace('반', '');
 
+                // Clone template worksheet
+                const newSheet = workbook.addWorksheet(`${sectionName}반`, {
+                    state: 'visible'
+                });
+
+                // Copy all properties from template
+                templateOriginalSheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+                    const newRow = newSheet.getRow(rowNumber);
+                    newRow.height = row.height;
+
+                    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                        const newCell = newRow.getCell(colNumber);
+                        newCell.value = cell.value;
+                        newCell.style = { ...cell.style };
+                    });
+                    newRow.commit();
+                });
+
+                // Copy column widths
+                templateOriginalSheet.columns.forEach((col, idx) => {
+                    if (newSheet.columns[idx]) {
+                        newSheet.columns[idx].width = col.width;
+                    }
+                });
+
+                // Copy merges
+                if (templateOriginalSheet.model.merges) {
+                    templateOriginalSheet.model.merges.forEach(merge => {
+                        newSheet.mergeCells(merge);
+                    });
+                }
+
                 // Update title
-                XLSX.utils.sheet_add_aoa(newSheet, [[`2026학년도 (${classData.grade + 1})학년 ( ${sectionName} ) 반 학급편성 명부`]], { origin: 'A1' });
-                XLSX.utils.sheet_add_aoa(newSheet, [['인천이음초등학교']], { origin: 'A3' });
+                newSheet.getCell('A1').value = `2026학년도 (${classData.grade + 1})학년 ( ${sectionName} ) 반 학급편성 명부`;
+                newSheet.getCell('A3').value = '인천이음초등학교';
 
                 // Sort students
                 const students = [...cls.students].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
 
                 // Fill in student data (starting from row 5)
                 students.forEach((student, studentIdx) => {
-                    const rowIndex = 4 + studentIdx; // Row 5 is index 4
-                    XLSX.utils.sheet_add_aoa(newSheet, [[
-                        studentIdx + 1,
-                        student.name,
-                        student.gender === 'M' ? '남성' : '여성',
-                        student.birth_date || '',
-                        student.section_number ? `${student.section_number}반` : '',
-                        student.notes || '',
-                        student.contact || ''
-                    ]], { origin: `A${rowIndex + 1}` });
-                });
+                    const rowIndex = 5 + studentIdx;
+                    const row = newSheet.getRow(rowIndex);
 
-                // Add sheet to workbook
-                workbook.Sheets[`${sectionName}반`] = newSheet;
-                workbook.SheetNames.push(`${sectionName}반`);
+                    row.getCell(1).value = studentIdx + 1;
+                    row.getCell(2).value = student.name;
+                    row.getCell(3).value = student.gender === 'M' ? '남성' : '여성';
+                    row.getCell(4).value = formatBirthDate(student.birth_date);
+                    row.getCell(5).value = student.section_number ? `${student.section_number}반` : '';
+                    row.getCell(6).value = student.notes || '';
+                    row.getCell(7).value = student.contact || '';
+                    row.commit();
+                });
             });
 
             // Download file
             const fileName = `학급편성_붙임서식_${classData.grade}학년_${new Date().toLocaleDateString('ko-KR').replace(/\./g, '').replace(/ /g, '')}.xlsx`;
-            XLSX.writeFile(workbook, fileName, { cellStyles: true });
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName;
+            link.click();
+            window.URL.revokeObjectURL(url);
+
 
 
             setToast({ message: '양식 기준 엑셀 파일이 다운로드되었습니다!', type: 'success' });
