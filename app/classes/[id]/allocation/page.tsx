@@ -1644,6 +1644,22 @@ export default function AllocationPage() {
             summaryGrid.push([`(${classData.grade + 1})학년 부장 :                         (인)`]);
 
             const summaryWs = XLSX.utils.aoa_to_sheet(summaryGrid);
+
+            // Apply cell merges and styles for summary sheet
+            summaryWs['!merges'] = [
+                { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, // Title merge
+                { s: { r: 3, c: 0 }, e: { r: 3, c: 4 } }, // Current grade merge
+                { s: { r: 5, c: 0 }, e: { r: 5, c: 4 } }, // Next grade merge
+            ];
+
+            summaryWs['!cols'] = [
+                { wch: 8 },   // 반
+                { wch: 8 },   // 남
+                { wch: 8 },   // 여
+                { wch: 18 },  // 합계
+                { wch: 25 }   // 비고
+            ];
+
             XLSX.utils.book_append_sheet(workbook, summaryWs, '붙임1');
 
             // ===== 2. 기존 반 Sheets (1반, 2반, 3반...) =====
@@ -1685,6 +1701,24 @@ export default function AllocationPage() {
                 }
 
                 const ws = XLSX.utils.aoa_to_sheet(grid);
+
+                // Apply cell merges and styles
+                ws['!merges'] = [
+                    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // Title merge
+                    { s: { r: 2, c: 0 }, e: { r: 2, c: 3 } }, // School name merge
+                    { s: { r: 2, c: 4 }, e: { r: 2, c: 6 } }, // Teacher info merge
+                ];
+
+                ws['!cols'] = [
+                    { wch: 6 },   // 번호
+                    { wch: 10 },  // 성명
+                    { wch: 6 },   // 성별
+                    { wch: 12 },  // 생년월일
+                    { wch: 10 },  // 2026년도 학급
+                    { wch: 20 },  // 특기사항
+                    { wch: 15 }   // 보호자 연락처
+                ];
+
                 XLSX.utils.book_append_sheet(workbook, ws, `${sectionNum}반`);
             });
 
@@ -1708,7 +1742,7 @@ export default function AllocationPage() {
                             student.name,
                             student.gender === 'M' ? '남성' : '여성',
                             student.birth_date || '',
-                            student.section_number || '',
+                            student.section_number ? `${student.section_number}반` : '', // Add "반" suffix
                             student.notes || '',
                             student.contact || ''
                         ]);
@@ -1718,6 +1752,23 @@ export default function AllocationPage() {
                 }
 
                 const ws = XLSX.utils.aoa_to_sheet(grid);
+
+                // Apply cell merges and styles
+                ws['!merges'] = [
+                    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // Title merge
+                    { s: { r: 2, c: 0 }, e: { r: 2, c: 6 } }, // School name merge
+                ];
+
+                ws['!cols'] = [
+                    { wch: 6 },   // 번호
+                    { wch: 10 },  // 성명
+                    { wch: 6 },   // 성별
+                    { wch: 12 },  // 생년월일
+                    { wch: 10 },  // 2025년도 학급
+                    { wch: 20 },  // 특기사항
+                    { wch: 15 }   // 보호자 연락처
+                ];
+
                 XLSX.utils.book_append_sheet(workbook, ws, `${sectionName}반`);
             });
 
@@ -1732,6 +1783,7 @@ export default function AllocationPage() {
             setToast({ message: 'Excel 파일 생성 중 오류가 발생했습니다.', type: 'error' });
         }
     };
+
 
 
     // 다시 편성
