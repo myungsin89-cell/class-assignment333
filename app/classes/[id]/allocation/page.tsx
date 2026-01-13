@@ -1602,179 +1602,133 @@ export default function AllocationPage() {
         setShowDownloadDropdown(false);
     };
 
-    // 양식 기준 엑셀 다운로드 (학급편성 붙임 서식)
-    const handleExportTemplateFormat = () => {
+    // 양식 기준 엑셀 다운로드 (학급편성 붙임 서식) - 템플릿 기반
+    const handleExportTemplateFormat = async () => {
         if (!allocation || !classData) return;
 
         try {
-            const workbook = XLSX.utils.book_new();
+            // Load template file
+            const templateResponse = await fetch('/templates/학급편성_붙임_서식_템플릿.xlsx');
+            const templateBuffer = await templateResponse.arrayBuffer();
+            const workbook = XLSX.read(templateBuffer, { type: 'array', cellStyles: true });
 
             // ===== 1. 붙임1 (Summary) Sheet =====
-            const summaryGrid: any[][] = [];
-            summaryGrid.push(['2026학년도 편성 학생 수 현황']);
-            summaryGrid.push([null, null, null, null, '인천이음초등학교']);
-            summaryGrid.push([]);
-            summaryGrid.push([`◈ 2025학년도 현재 학년 :  (${classData.grade})학년`]);
-            summaryGrid.push([]);
-            summaryGrid.push([`◈ 2026학년도 진급 학년 :  (${classData.grade + 1})학년 - (${allocation.classes.length})학급`]);
-            summaryGrid.push([]);
+            const summarySheet = workbook.Sheets['붙임1'];
 
-            // Table header
-            summaryGrid.push(['반', '남', '여', '합계\n(학급별 인원수)', '비고']);
+            // Fill in grade information
+            XLSX.utils.sheet_add_aoa(summarySheet, [[`◈ 2025학년도 현재 학년 :  (${classData.grade})학년`]], { origin: 'A4' });
+            XLSX.utils.sheet_add_aoa(summarySheet, [[`◈ 2026학년도 진급 학년 :  (${classData.grade + 1})학년 - (${allocation.classes.length})학급`]], { origin: 'A6' });
 
-            // Data rows for each class
+            // Fill in class statistics (starting from row 9, which is index 8)
             allocation.classes.forEach((cls, idx) => {
-                const sectionName = getSectionName(idx).replace('반', ''); // Remove '반' suffix
+                const rowIndex = 8 + idx; // Row 9 is index 8
+                const sectionName = getSectionName(idx).replace('반', '');
                 const maleCount = cls.gender_stats.male;
                 const femaleCount = cls.gender_stats.female;
                 const total = cls.students.length;
-                summaryGrid.push([sectionName, maleCount, femaleCount, total, '']);
+
+                XLSX.utils.sheet_add_aoa(summarySheet, [[sectionName, maleCount, femaleCount, total, '']], { origin: `A${rowIndex + 1}` });
             });
 
-            // Total row
+            // Fill in totals
+            const totalRow = 8 + allocation.classes.length;
             const totalMale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.male, 0);
             const totalFemale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.female, 0);
             const totalStudents = allocation.classes.reduce((sum, cls) => sum + cls.students.length, 0);
-            summaryGrid.push(['총계', totalMale, totalFemale, totalStudents, null]);
+            XLSX.utils.sheet_add_aoa(summarySheet, [['총계', totalMale, totalFemale, totalStudents, null]], { origin: `A${totalRow + 1}` });
 
-            // Footer
-            summaryGrid.push([]);
-            summaryGrid.push([new Date().toLocaleDateString('ko-KR')]);
-            summaryGrid.push([]);
-            summaryGrid.push([`(${classData.grade + 1})학년 부장 :                         (인)`]);
+            // Fill in date
+            const dateRow = totalRow + 2;
+            XLSX.utils.sheet_add_aoa(summarySheet, [[new Date().toLocaleDateString('ko-KR')]], { origin: `A${dateRow + 1}` });
 
-            const summaryWs = XLSX.utils.aoa_to_sheet(summaryGrid);
+            // Fill in footer
+            const footerRow = dateRow + 2;
+            XLSX.utils.sheet_add_aoa(summarySheet, [[`(${classData.grade + 1})학년 부장 :                         (인)`]], { origin: `A${footerRow + 1}` });
 
-            // Apply cell merges and styles for summary sheet
-            summaryWs['!merges'] = [
-                { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }, // Title merge
-                { s: { r: 3, c: 0 }, e: { r: 3, c: 4 } }, // Current grade merge
-                { s: { r: 5, c: 0 }, e: { r: 5, c: 4 } }, // Next grade merge
-            ];
-
-            summaryWs['!cols'] = [
-                { wch: 8 },   // 반
-                { wch: 8 },   // 남
-                { wch: 8 },   // 여
-                { wch: 18 },  // 합계
-                { wch: 25 }   // 비고
-            ];
-
-            XLSX.utils.book_append_sheet(workbook, summaryWs, '붙임1');
 
             // ===== 2. 기존 반 Sheets (1반, 2반, 3반...) =====
             const originalSections = [...new Set(allStudents.map(s => s.section_number || 1))].sort((a, b) => a - b);
+            const templateOriginalSheet = workbook.Sheets['1반'];
+
+            // Remove template sheets we'll replace
+            delete workbook.Sheets['1반'];
+            delete workbook.Sheets['가반'];
+            workbook.SheetNames = workbook.SheetNames.filter(name => name !== '1반' && name !== '가반');
 
             originalSections.forEach(sectionNum => {
+                // Clone template sheet
+                const newSheet = JSON.parse(JSON.stringify(templateOriginalSheet));
+
+                // Update title and header
+                XLSX.utils.sheet_add_aoa(newSheet, [[`인천이음초등학교`, null, null, null, `2025학년도 (${classData.grade})학년 (${sectionNum})반  담임 :`]], { origin: 'A3' });
+
                 // Get students from this original section
                 const studentsInSection = allocation.classes.flatMap((cls, classIndex) =>
                     cls.students
                         .filter(s => (s.section_number || 1) === sectionNum)
                         .map(s => ({
                             ...s,
-                            assignedSection: getSectionName(classIndex).replace('반', '') // Remove '반' suffix
+                            assignedSection: getSectionName(classIndex).replace('반', '')
                         }))
                 ).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
 
-                const grid: any[][] = [];
-                grid.push(['2026학년도 학급 편성 자료(2025학년도 기준)']);
-                grid.push([]);
-                grid.push(['인천이음초등학교', null, null, null, `2025학년도 (${classData.grade})학년 (${sectionNum})반  담임 :`]);
-                grid.push(['번호', '성명', '성별', '생년월일', '2026년도\n학급', '특기사항', '보호자 연락처']);
+                // Fill in student data (starting from row 5)
+                studentsInSection.forEach((student, idx) => {
+                    const rowIndex = 4 + idx; // Row 5 is index 4
+                    XLSX.utils.sheet_add_aoa(newSheet, [[
+                        idx + 1,
+                        student.name,
+                        student.gender === 'M' ? '남성' : '여성',
+                        student.birth_date || '',
+                        student.assignedSection,
+                        student.notes || '',
+                        student.contact || ''
+                    ]], { origin: `A${rowIndex + 1}` });
+                });
 
-                // Add student data (up to 30 rows)
-                for (let i = 0; i < 30; i++) {
-                    if (i < studentsInSection.length) {
-                        const student = studentsInSection[i];
-                        grid.push([
-                            i + 1,
-                            student.name,
-                            student.gender === 'M' ? '남성' : '여성',
-                            student.birth_date || '',
-                            student.assignedSection,
-                            student.notes || '',
-                            student.contact || ''
-                        ]);
-                    } else {
-                        grid.push([i + 1, null, null, null, null, null, null]);
-                    }
-                }
-
-                const ws = XLSX.utils.aoa_to_sheet(grid);
-
-                // Apply cell merges and styles
-                ws['!merges'] = [
-                    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // Title merge
-                    { s: { r: 2, c: 0 }, e: { r: 2, c: 3 } }, // School name merge
-                    { s: { r: 2, c: 4 }, e: { r: 2, c: 6 } }, // Teacher info merge
-                ];
-
-                ws['!cols'] = [
-                    { wch: 6 },   // 번호
-                    { wch: 10 },  // 성명
-                    { wch: 6 },   // 성별
-                    { wch: 12 },  // 생년월일
-                    { wch: 10 },  // 2026년도 학급
-                    { wch: 20 },  // 특기사항
-                    { wch: 15 }   // 보호자 연락처
-                ];
-
-                XLSX.utils.book_append_sheet(workbook, ws, `${sectionNum}반`);
+                // Add sheet to workbook
+                workbook.Sheets[`${sectionNum}반`] = newSheet;
+                workbook.SheetNames.splice(1 + sectionNum, 0, `${sectionNum}반`);
             });
 
-            // ===== 3. 새 반 Sheets (가반, 나반, 다반...) =====
+            // ===== 3. 새 반 Sheets =====
+            const templateNewSheet = JSON.parse(JSON.stringify(templateOriginalSheet)); // Use same template structure
+
             allocation.classes.forEach((cls, idx) => {
-                const sectionName = getSectionName(idx).replace('반', ''); // Remove '반' suffix
+                // Clone template sheet
+                const newSheet = JSON.parse(JSON.stringify(templateNewSheet));
+                const sectionName = getSectionName(idx).replace('반', '');
+
+                // Update title
+                XLSX.utils.sheet_add_aoa(newSheet, [[`2026학년도 (${classData.grade + 1})학년 ( ${sectionName} ) 반 학급편성 명부`]], { origin: 'A1' });
+                XLSX.utils.sheet_add_aoa(newSheet, [['인천이음초등학교']], { origin: 'A3' });
+
+                // Sort students
                 const students = [...cls.students].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
 
-                const grid: any[][] = [];
-                grid.push([`2026학년도 (${classData.grade + 1})학년 ( ${sectionName} ) 반 학급편성 명부`]);
-                grid.push([]);
-                grid.push(['인천이음초등학교']);
-                grid.push(['번호', '성명', '성별', '생년월일', '2025년도\n학급', '특기사항', '보호자 연락처']);
+                // Fill in student data (starting from row 5)
+                students.forEach((student, studentIdx) => {
+                    const rowIndex = 4 + studentIdx; // Row 5 is index 4
+                    XLSX.utils.sheet_add_aoa(newSheet, [[
+                        studentIdx + 1,
+                        student.name,
+                        student.gender === 'M' ? '남성' : '여성',
+                        student.birth_date || '',
+                        student.section_number ? `${student.section_number}반` : '',
+                        student.notes || '',
+                        student.contact || ''
+                    ]], { origin: `A${rowIndex + 1}` });
+                });
 
-                // Add student data (up to 30 rows)
-                for (let i = 0; i < 30; i++) {
-                    if (i < students.length) {
-                        const student = students[i];
-                        grid.push([
-                            i + 1,
-                            student.name,
-                            student.gender === 'M' ? '남성' : '여성',
-                            student.birth_date || '',
-                            student.section_number ? `${student.section_number}반` : '', // Add "반" suffix
-                            student.notes || '',
-                            student.contact || ''
-                        ]);
-                    } else {
-                        grid.push([i + 1, null, null, null, null, null, null]);
-                    }
-                }
-
-                const ws = XLSX.utils.aoa_to_sheet(grid);
-
-                // Apply cell merges and styles
-                ws['!merges'] = [
-                    { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // Title merge
-                    { s: { r: 2, c: 0 }, e: { r: 2, c: 6 } }, // School name merge
-                ];
-
-                ws['!cols'] = [
-                    { wch: 6 },   // 번호
-                    { wch: 10 },  // 성명
-                    { wch: 6 },   // 성별
-                    { wch: 12 },  // 생년월일
-                    { wch: 10 },  // 2025년도 학급
-                    { wch: 20 },  // 특기사항
-                    { wch: 15 }   // 보호자 연락처
-                ];
-
-                XLSX.utils.book_append_sheet(workbook, ws, `${sectionName}반`);
+                // Add sheet to workbook
+                workbook.Sheets[`${sectionName}반`] = newSheet;
+                workbook.SheetNames.push(`${sectionName}반`);
             });
 
             // Download file
             const fileName = `학급편성_붙임서식_${classData.grade}학년_${new Date().toLocaleDateString('ko-KR').replace(/\./g, '').replace(/ /g, '')}.xlsx`;
-            XLSX.writeFile(workbook, fileName);
+            XLSX.writeFile(workbook, fileName, { cellStyles: true });
+
 
             setToast({ message: '양식 기준 엑셀 파일이 다운로드되었습니다!', type: 'success' });
             setShowDownloadDropdown(false);
