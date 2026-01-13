@@ -1602,6 +1602,138 @@ export default function AllocationPage() {
         setShowDownloadDropdown(false);
     };
 
+    // 양식 기준 엑셀 다운로드 (학급편성 붙임 서식)
+    const handleExportTemplateFormat = () => {
+        if (!allocation || !classData) return;
+
+        try {
+            const workbook = XLSX.utils.book_new();
+
+            // ===== 1. 붙임1 (Summary) Sheet =====
+            const summaryGrid: any[][] = [];
+            summaryGrid.push(['2026학년도 편성 학생 수 현황']);
+            summaryGrid.push([null, null, null, null, '인천이음초등학교']);
+            summaryGrid.push([]);
+            summaryGrid.push([`◈ 2025학년도 현재 학년 :  (${classData.grade})학년`]);
+            summaryGrid.push([]);
+            summaryGrid.push([`◈ 2026학년도 진급 학년 :  (${classData.grade + 1})학년 - (${allocation.classes.length})학급`]);
+            summaryGrid.push([]);
+
+            // Table header
+            summaryGrid.push(['반', '남', '여', '합계\n(학급별 인원수)', '비고']);
+
+            // Data rows for each class
+            allocation.classes.forEach((cls, idx) => {
+                const sectionName = getSectionName(idx).replace('반', ''); // Remove '반' suffix
+                const maleCount = cls.gender_stats.male;
+                const femaleCount = cls.gender_stats.female;
+                const total = cls.students.length;
+                summaryGrid.push([sectionName, maleCount, femaleCount, total, '']);
+            });
+
+            // Total row
+            const totalMale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.male, 0);
+            const totalFemale = allocation.classes.reduce((sum, cls) => sum + cls.gender_stats.female, 0);
+            const totalStudents = allocation.classes.reduce((sum, cls) => sum + cls.students.length, 0);
+            summaryGrid.push(['총계', totalMale, totalFemale, totalStudents, null]);
+
+            // Footer
+            summaryGrid.push([]);
+            summaryGrid.push([new Date().toLocaleDateString('ko-KR')]);
+            summaryGrid.push([]);
+            summaryGrid.push([`(${classData.grade + 1})학년 부장 :                         (인)`]);
+
+            const summaryWs = XLSX.utils.aoa_to_sheet(summaryGrid);
+            XLSX.utils.book_append_sheet(workbook, summaryWs, '붙임1');
+
+            // ===== 2. 기존 반 Sheets (1반, 2반, 3반...) =====
+            const originalSections = [...new Set(allStudents.map(s => s.section_number || 1))].sort((a, b) => a - b);
+
+            originalSections.forEach(sectionNum => {
+                // Get students from this original section
+                const studentsInSection = allocation.classes.flatMap((cls, classIndex) =>
+                    cls.students
+                        .filter(s => (s.section_number || 1) === sectionNum)
+                        .map(s => ({
+                            ...s,
+                            assignedSection: getSectionName(classIndex).replace('반', '') // Remove '반' suffix
+                        }))
+                ).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+
+                const grid: any[][] = [];
+                grid.push(['2026학년도 학급 편성 자료(2025학년도 기준)']);
+                grid.push([]);
+                grid.push(['인천이음초등학교', null, null, null, `2025학년도 (${classData.grade})학년 (${sectionNum})반  담임 :`]);
+                grid.push(['번호', '성명', '성별', '생년월일', '2026년도\n학급', '특기사항', '보호자 연락처']);
+
+                // Add student data (up to 30 rows)
+                for (let i = 0; i < 30; i++) {
+                    if (i < studentsInSection.length) {
+                        const student = studentsInSection[i];
+                        grid.push([
+                            i + 1,
+                            student.name,
+                            student.gender === 'M' ? '남성' : '여성',
+                            student.birth_date || '',
+                            student.assignedSection,
+                            student.notes || '',
+                            student.contact || ''
+                        ]);
+                    } else {
+                        grid.push([i + 1, null, null, null, null, null, null]);
+                    }
+                }
+
+                const ws = XLSX.utils.aoa_to_sheet(grid);
+                XLSX.utils.book_append_sheet(workbook, ws, `${sectionNum}반`);
+            });
+
+            // ===== 3. 새 반 Sheets (가반, 나반, 다반...) =====
+            allocation.classes.forEach((cls, idx) => {
+                const sectionName = getSectionName(idx).replace('반', ''); // Remove '반' suffix
+                const students = [...cls.students].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+
+                const grid: any[][] = [];
+                grid.push([`2026학년도 (${classData.grade + 1})학년 ( ${sectionName} ) 반 학급편성 명부`]);
+                grid.push([]);
+                grid.push(['인천이음초등학교']);
+                grid.push(['번호', '성명', '성별', '생년월일', '2025년도\n학급', '특기사항', '보호자 연락처']);
+
+                // Add student data (up to 30 rows)
+                for (let i = 0; i < 30; i++) {
+                    if (i < students.length) {
+                        const student = students[i];
+                        grid.push([
+                            i + 1,
+                            student.name,
+                            student.gender === 'M' ? '남성' : '여성',
+                            student.birth_date || '',
+                            student.section_number || '',
+                            student.notes || '',
+                            student.contact || ''
+                        ]);
+                    } else {
+                        grid.push([i + 1, null, null, null, null, null, null]);
+                    }
+                }
+
+                const ws = XLSX.utils.aoa_to_sheet(grid);
+                XLSX.utils.book_append_sheet(workbook, ws, `${sectionName}반`);
+            });
+
+            // Download file
+            const fileName = `학급편성_붙임서식_${classData.grade}학년_${new Date().toLocaleDateString('ko-KR').replace(/\./g, '').replace(/ /g, '')}.xlsx`;
+            XLSX.writeFile(workbook, fileName);
+
+            setToast({ message: '양식 기준 엑셀 파일이 다운로드되었습니다!', type: 'success' });
+            setShowDownloadDropdown(false);
+        } catch (error) {
+            console.error('Excel export error:', error);
+            setToast({ message: 'Excel 파일 생성 중 오류가 발생했습니다.', type: 'error' });
+        }
+    };
+
+
     // 다시 편성
     const handleReAllocate = () => {
         if (!classData || !allStudents.length) return;
@@ -2820,6 +2952,28 @@ export default function AllocationPage() {
                                         onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                                     >
                                         📂 기존반 기준
+                                    </button>
+                                    <button
+                                        onClick={handleExportTemplateFormat}
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.75rem 1rem',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            borderTop: '1px solid rgba(255,255,255,0.1)',
+                                            color: '#fff',
+                                            fontSize: '0.9rem',
+                                            textAlign: 'left',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem',
+                                            transition: 'background 0.2s'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                    >
+                                        📄 양식 기준
                                     </button>
                                 </div>
                             )}
