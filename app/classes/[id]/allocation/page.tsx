@@ -1784,8 +1784,8 @@ export default function AllocationPage() {
                 newSheet.getCell('A1').value = `2026학년도 (${classData.grade + 1})학년 ( ${sectionName} ) 반 학급편성 명부`;
                 newSheet.getCell('A3').value = '인천이음초등학교';
 
-                // Sort students
-                const students = [...cls.students].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+                // Sort students (전출예정 학생은 가장 뒤로)
+                const students = [...cls.students].sort(koreanSort);
 
                 // Fill in student data (starting from row 5)
                 students.forEach((student, studentIdx) => {
